@@ -1,0 +1,290 @@
+/* =============================================================================
+ * @diggy/ui — pen-sketch theme
+ * CSS custom properties + hand-drawn base styles for the Diggy design system.
+ * Import once, e.g. `@import '@diggy/ui/styles.css';` in your app entry CSS.
+ * ========================================================================== */
+
+:root {
+  /* --- Ink / paper --------------------------------------------------- */
+  --diggy-ink: #1b1917;
+  --diggy-ink-soft: #403c33;
+  --diggy-ink-muted: #6f695b;
+  --diggy-ink-faint: rgba(27, 25, 23, 0.14);
+  --diggy-paper: #fdf8ec;
+  --diggy-paper-2: #f6efd9;
+  --diggy-paper-3: #efe4c4;
+  --diggy-paper-edge: rgba(27, 25, 23, 0.16);
+
+  /* --- Colourful crayon accents -------------------------------------- */
+  --diggy-pink: #ff5d8f;
+  --diggy-red: #ff5a4d;
+  --diggy-orange: #ff8c42;
+  --diggy-amber: #ffb703;
+  --diggy-gold: #f9c74f;
+  --diggy-lime: #a3d977;
+  --diggy-green: #43aa8b;
+  --diggy-teal: #2ec4b6;
+  --diggy-cyan: #4cc9f0;
+  --diggy-sky: #4895ef;
+  --diggy-blue: #4361ee;
+  --diggy-indigo: #5a5cf0;
+  --diggy-violet: #9b5de5;
+  --diggy-magenta: #f15bb5;
+
+  /* Default accent (components can override per-instance). */
+  --diggy-accent: var(--diggy-amber);
+
+  /* --- Motion -------------------------------------------------------- */
+  --diggy-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --diggy-ease-sketch: cubic-bezier(0.22, 1, 0.36, 1);
+  --diggy-dur-fast: 160ms;
+  --diggy-dur: 260ms;
+  --diggy-dur-slow: 600ms;
+
+  /* --- Shape --------------------------------------------------------- */
+  --diggy-radius-sketch: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --diggy-radius-sketch-sm: 125px 10px 115px 10px / 10px 115px 10px 125px;
+  --diggy-shadow-sketch: 3px 3px 0 0 var(--diggy-ink);
+  --diggy-shadow-sketch-soft: 4px 4px 0 0 var(--diggy-ink-faint);
+
+  /* --- Type ---------------------------------------------------------- */
+  --diggy-font-sketch: 'Patrick Hand', 'Comic Neue', 'Segoe Print', 'Bradley Hand',
+    'Comic Sans MS', ui-rounded, system-ui, sans-serif;
+  --diggy-font-hand: 'Caveat', 'Patrick Hand', 'Segoe Print', cursive;
+  --diggy-font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+
+  /* --- Ink-noise (SVG feTurbulence) ---------------------------------- */
+  --diggy-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+}
+
+/* Dark variants — opt in via `.dark` or `[data-theme="dark"]`. */
+:where(.dark, [data-theme='dark']) {
+  --diggy-ink: #f4efe2;
+  --diggy-ink-soft: #d8d2c2;
+  --diggy-ink-muted: #a8a190;
+  --diggy-ink-faint: rgba(244, 239, 226, 0.16);
+  --diggy-paper: #17161c;
+  --diggy-paper-2: #1f1e26;
+  --diggy-paper-3: #2a2833;
+  --diggy-paper-edge: rgba(244, 239, 226, 0.18);
+  --diggy-shadow-sketch: 3px 3px 0 0 var(--diggy-ink);
+}
+
+/* ------------------------------------------------------------------ *
+ * Keyframes (mirrors of the Tailwind preset)
+ * ------------------------------------------------------------------ */
+
+@keyframes diggy-wiggle {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-2.5deg);
+  }
+  75% {
+    transform: rotate(2.5deg);
+  }
+}
+
+@keyframes diggy-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes diggy-inkblot {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  45% {
+    transform: scale(1.05);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+@keyframes diggy-spring {
+  0% {
+    transform: scale(0.9);
+  }
+  55% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes diggy-draw {
+  0% {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+
+@keyframes diggy-blob {
+  0%,
+  100% {
+    border-radius: 42% 58% 63% 37% / 41% 44% 56% 59%;
+    transform: rotate(0deg);
+  }
+  50% {
+    border-radius: 58% 42% 33% 67% / 63% 37% 63% 37%;
+    transform: rotate(6deg);
+  }
+}
+
+@keyframes diggy-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes diggy-squiggle {
+  0%,
+  100% {
+    transform: translateX(0) skewX(0deg);
+  }
+  50% {
+    transform: translateX(2px) skewX(-6deg);
+  }
+}
+
+@keyframes diggy-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(1deg);
+  }
+}
+
+@keyframes diggy-pop {
+  0% {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Base sketch styles
+ * ------------------------------------------------------------------ */
+
+.diggy-root {
+  color: var(--diggy-ink);
+  font-family: var(--diggy-font-sketch);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Layered paper texture: soft vignette + ruled grid + fibre noise. */
+.diggy-paper-texture {
+  background-color: var(--diggy-paper);
+  background-image:
+    radial-gradient(120% 120% at 50% -10%, rgba(255, 255, 255, 0.6), transparent 60%),
+    linear-gradient(var(--diggy-ink-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--diggy-ink-faint) 1px, transparent 1px),
+    var(--diggy-noise);
+  background-size: 100% 100%, 22px 22px, 22px 22px, 140px 140px;
+  background-blend-mode: normal, multiply, multiply, multiply;
+}
+
+/* Ink noise overlay only (transparent background). */
+.diggy-noise {
+  background-image: var(--diggy-noise);
+  background-size: 140px 140px;
+}
+
+/* Hand-drawn border without an SVG overlay. */
+.diggy-sketch-border {
+  border: 2px solid var(--diggy-ink);
+  border-radius: var(--diggy-radius-sketch);
+  box-shadow: var(--diggy-shadow-sketch);
+}
+
+/* Squiggly "marker" underline used for headings / emphasis. */
+.diggy-underline {
+  background-image: linear-gradient(transparent 62%, var(--diggy-accent) 62%);
+  background-repeat: no-repeat;
+  background-size: 100% 0.5em;
+  padding-bottom: 0.08em;
+}
+
+/* Sketchy focus ring (visible only for keyboard users). */
+.diggy-focus:focus-visible,
+.diggy-root :focus-visible {
+  outline: 2px dashed var(--diggy-accent);
+  outline-offset: 3px;
+}
+
+/* Animated ink-reveal helper. */
+.diggy-draw-in {
+  animation: diggy-draw var(--diggy-dur-slow) var(--diggy-ease-sketch) both;
+}
+
+/* Colourful animated ink wash you can drop on any surface. */
+.diggy-ink-wash {
+  background-image:
+    radial-gradient(120% 120% at 10% 0%, rgba(255, 93, 143, 0.22), transparent 60%),
+    radial-gradient(120% 120% at 90% 20%, rgba(76, 201, 240, 0.22), transparent 55%),
+    radial-gradient(140% 140% at 50% 120%, rgba(155, 93, 229, 0.22), transparent 60%);
+  background-size: 100% 100%;
+  animation: diggy-blob 18s ease-in-out infinite;
+}
+
+.diggy-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.diggy-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--diggy-ink) 45%, transparent);
+  border-radius: var(--diggy-radius-sketch-sm);
+}
+
+.diggy-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--diggy-accent) 45%, transparent);
+  color: var(--diggy-ink);
+}
+
+/* ------------------------------------------------------------------ *
+ * Motion preferences
+ * ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .diggy-root *,
+  .diggy-root *::before,
+  .diggy-root *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

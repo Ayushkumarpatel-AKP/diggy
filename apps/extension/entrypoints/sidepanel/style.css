@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--diggy-paper, #fdf8ec);
+  color: var(--diggy-ink, #1b1917);
+  font-family: var(--diggy-font-sketch, 'Patrick Hand', ui-rounded, system-ui, sans-serif);
+}
+
+/* ------------------------------------------------------------------ *
+ * Side-panel shell
+ *
+ * The Vault / Reminders / Page panels are mounted by App.tsx inside a
+ * ~400px-wide, full-height flex column (below the header + tab bar). They all
+ * share the same shell contract:
+ *
+ *   <div class="diggy-root diggy-panel diggy-panel-enter flex h-full min-h-0 flex-1 flex-col">
+ *     <header class="diggy-panel-header …">…</header>
+ *     <div class="diggy-scrollbar min-h-0 flex-1 overflow-y-auto">…</div>
+ *   </div>
+ * ------------------------------------------------------------------ */
+
+/* Gentle panel enter: fade in + 6px slide-up. */
+@keyframes diggy-panel-enter-kf {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.diggy-panel-enter {
+  animation: diggy-panel-enter-kf 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Compact, uppercase panel title (used on the leading SketchBadge). */
+.diggy-panel-title {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Keeps the title + close affordance on one compact row that never jumps. */
+.diggy-panel-header {
+  min-height: 2.75rem;
+}
+
+/* Visible keyboard focus for the hand-drawn controls inside a panel. Mirrors
+ * the `@diggy/ui` rule so the ring survives even without the shared stylesheet. */
+.diggy-panel :focus-visible {
+  outline: 2px dashed var(--diggy-accent, #ffb703);
+  outline-offset: 2px;
+}
+
+/* Slim, sketchy scrollbars for the panel's single scroll region. */
+.diggy-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 25, 23, 0.35) transparent;
+  overscroll-behavior: contain;
+}
+
+.diggy-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.diggy-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(27, 25, 23, 0.35);
+  background: color-mix(in srgb, var(--diggy-ink, #1b1917) 35%, transparent);
+  border-radius: 999px;
+}
+
+.diggy-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(27, 25, 23, 0.55);
+  background: color-mix(in srgb, var(--diggy-ink, #1b1917) 55%, transparent);
+}
+
+.diggy-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Note: the panels pair this with `overflow-x-hidden` on the scroll region so a
+ * long URL/title can never widen the ~400px side panel. */
+
+/* ------------------------------------------------------------------ *
+ * Motion preferences
+ * ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .diggy-panel-enter {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .diggy-scrollbar {
+    scroll-behavior: auto;
+  }
+}

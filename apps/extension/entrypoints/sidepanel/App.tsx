@@ -1,0 +1,591 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toCoreMessages } from '@diggy/core';
+import {
+  InkBackground,
+  SketchBadge,
+  SketchButton,
+  SketchCard,
+  SketchInput,
+  SketchToggle,
+  ThinkingDots,
+} from '@diggy/ui';
+import type { AvatarMood, ChatMessage, Profile } from '@diggy/shared';
+import { callContent, getBridgeStatus, type BridgeEventMessage } from '../../src/messages';
+import {
+  applyFillPlan,
+  PlatformToolContext,
+  speakText,
+  type FillPlan,
+} from '../../src/platform-context';
+import { buildHeuristicPlan } from '../../src/field-mapper';
+import { VaultPanel } from './VaultPanel';
+import { RemindersPanel } from './RemindersPanel';
+import { PagePanel } from './PagePanel';
+import { WatchPanel } from './WatchPanel';
+import { AppsPanel } from './AppsPanel';
+import { getProfile, getSettings, saveSettings, type Settings } from '../../src/storage';
+import { runResilient } from '../../src/brain';
+import { clearChat, loadChat, saveChat } from '../../src/chat-memory';
+
+/* ------------------------------------------------------------------ *
+ * Speech recognition (Web Speech API) — minimal local typings
+ * ------------------------------------------------------------------ */
+
+interface SpeechAlternative {
+  transcript: string;
+}
+interface SpeechResult {
+  isFinal: boolean;
+  length: number;
+  [index: number]: SpeechAlternative;
+}
+interface SpeechResultList {
+  length: number;
+  [index: number]: SpeechResult;
+}
+interface SpeechEvent {
+  results: SpeechResultList;
+}
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start(): void;
+  stop(): void;
+  onresult: ((event: SpeechEvent) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+  onend: (() => void) | null;
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+function getSpeechRecognition(): SpeechRecognitionCtor | undefined {
+  const scope = window as unknown as {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  };
+  return scope.SpeechRecognition ?? scope.webkitSpeechRecognition;
+}
+
+function uid(prefix = 'msg'): string {
+  const random = Math.random().toString(36).slice(2, 8);
+  return `${prefix}-${Date.now().toString(36)}-${random}`;
+}
+
+function message(role: ChatMessage['role'], content: string): ChatMessage {
+  return { id: uid(), role, content, createdAt: new Date().toISOString() };
+}
+
+type View = 'chat' | 'vault' | 'reminders' | 'watch' | 'apps' | 'page';
+
+const TABS: ReadonlyArray<{
+  id: View;
+  label: string;
+  icon: string;
+  accent: 'sky' | 'amber' | 'green' | 'pink';
+}> = [
+  { id: 'chat', label: 'Chat', icon: '💬', accent: 'sky' },
+  { id: 'vault', label: 'Profile', icon: '🔐', accent: 'pink' },
+  { id: 'reminders', label: 'Reminders', icon: '⏰', accent: 'amber' },
+  { id: 'watch', label: 'Watch', icon: '👀', accent: 'pink' },
+  { id: 'apps', label: 'Apps', icon: '🔗', accent: 'green' },
+  { id: 'page', label: 'Page', icon: '🌐', accent: 'green' },
+];
+
+/* ------------------------------------------------------------------ *
+ * App
+ * ------------------------------------------------------------------ */
+
+export function App(): JSX.Element {
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    message(
+      'assistant',
+      'Hi! I’m Diggy. Ask me to read a page, fill a form, set a reminder or research something — I’ll always show you a plan before I touch a form.',
+    ),
+  ]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [micReady, setMicReady] = useState(false);
+  const [plan, setPlan] = useState<FillPlan | null>(null);
+  const [mood, setMood] = useState<AvatarMood>('neutral');
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [bridge, setBridge] = useState<{ connected: boolean; url: string }>({ connected: false, url: '' });
+  const [showSettings, setShowSettings] = useState(false);
+  const [view, setView] = useState<View>('chat');
+  const [brainProvider, setBrainProvider] = useState<string>('');
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
+  const context = useMemo(
+    () => new PlatformToolContext({ onFillPlan: setPlan, onMood: setMood }),
+    [],
+  );
+
+  const push = useCallback((role: ChatMessage['role'], content: string) => {
+    setMessages((current) => [...current, message(role, content)]);
+  }, []);
+
+  const updateById = useCallback((id: string, updater: (content: string) => string) => {
+    setMessages((current) =>
+      current.map((item) => (item.id === id ? { ...item, content: updater(item.content) } : item)),
+    );
+  }, []);
+
+  /* --- init ------------------------------------------------------------- */
+
+  useEffect(() => {
+    void (async () => {
+      // Restore the conversation memory first, then settings + bridge status.
+      const stored = await loadChat();
+      if (stored.length > 0) setMessages(stored);
+      setSettings(await getSettings());
+      const status = await getBridgeStatus();
+      setBridge({ connected: status.connected, url: status.url });
+    })();
+  }, []);
+
+  // Persist the conversation (capped) whenever a turn finishes.
+  useEffect(() => {
+    if (!busy) void saveChat(messages);
+  }, [busy, messages]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, busy]);
+
+  /* --- desktop bridge events ------------------------------------------- */
+
+  useEffect(() => {
+    const listener = (raw: unknown): undefined => {
+      if (typeof raw !== 'object' || raw === null) return undefined;
+      const event = raw as { type?: unknown; event?: unknown; payload?: unknown };
+      if (event.type === 'diggy:bridge-event') {
+        const bridgeEvent = raw as BridgeEventMessage;
+        if (bridgeEvent.event === 'avatar') {
+          const payload = bridgeEvent.payload as { mood?: AvatarMood } | undefined;
+          if (payload?.mood) setMood(payload.mood);
+        }
+      }
+      return undefined;
+    };
+    browser.runtime.onMessage.addListener(listener);
+    return () => browser.runtime.onMessage.removeListener(listener);
+  }, []);
+
+  /* --- assistant -------------------------------------------------------- */
+
+  const respond = useCallback(
+    async (history: ChatMessage[]) => {
+      const assistantId = uid('assistant');
+      setMessages((current) => [
+        ...current,
+        { id: assistantId, role: 'assistant', content: '', createdAt: new Date().toISOString() },
+      ]);
+      setBusy(true);
+      try {
+        const active = settings ?? (await getSettings());
+        // Automatic Groq ⇄ NVIDIA failover happens inside runResilient.
+        const result = await runResilient({
+          settings: active,
+          messages: toCoreMessages(history),
+          makeContext: () => context,
+          onDelta: (_delta, full) => updateById(assistantId, () => full),
+        });
+        const text = result.text.trim() || '(Diggy had nothing to add.)';
+        updateById(assistantId, () => text);
+        setBrainProvider(result.provider);
+        if (active.voiceEnabled && text.length <= 320 && !text.startsWith('⚠️')) speakText(text);
+      } catch (error) {
+        updateById(assistantId, () => `⚠️ ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [settings, context, updateById],
+  );
+
+  const handleSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput('');
+    const userMessage = message('user', text);
+    const history = [...messages, userMessage];
+    setMessages(history);
+    await respond(history);
+  }, [input, busy, messages, respond]);
+
+  const clearConversation = useCallback(async () => {
+    await clearChat();
+    setMessages([message('assistant', 'Chat cleared. What shall we do next?')]);
+  }, []);
+
+  /* --- mic -------------------------------------------------------------- */
+
+  const enableVoice = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      push('assistant', 'This browser cannot access the microphone.');
+      return;
+    }
+    try {
+      // Grant the mic for the whole extension (the offscreen recorder reuses it).
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setMicReady(true);
+      push(
+        'assistant',
+        '🎙 Microphone ready — hold Ctrl+Shift+Space on any page, speak, then release.',
+      );
+    } catch {
+      push('assistant', 'Microphone permission was denied. Allow it for this extension and retry.');
+    }
+  }, [push]);
+
+  /* --- quick actions ---------------------------------------------------- */
+
+  const quickReadPage = useCallback(async () => {
+    setBusy(true);
+    try {
+      const page = await callContent('readPage', { includeFields: true });
+      const fields = page.fields ?? [];
+      const labels = fields
+        .slice(0, 10)
+        .map((field) => field.label || field.name || field.type || 'field')
+        .join(', ');
+      push(
+        'assistant',
+        `📄 ${page.title}\n${page.url}\n${fields.length} field(s)${labels ? `: ${labels}` : ''}`,
+      );
+      setMood('thinking');
+    } catch (error) {
+      push('assistant', `Couldn’t read this page: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [push]);
+
+  const quickPlanFill = useCallback(async () => {
+    setBusy(true);
+    try {
+      const page = await callContent('readPage', { includeFields: true });
+      const fields = page.fields ?? [];
+      const profile: Profile | null = await getProfile();
+      if (!profile) {
+        push('assistant', 'I don’t have your profile cached yet, so I can’t map these fields.');
+        return;
+      }
+      const fields2 = buildHeuristicPlan(fields, profile);
+      if (fields2.length === 0) {
+        push('assistant', 'I couldn’t confidently map any field on this page.');
+        return;
+      }
+      setPlan({ fields: fields2, createdAt: new Date().toISOString() });
+      push('assistant', `I found ${fields2.length} field(s) I can fill. Review the plan and hit “Fill”.`);
+      setMood('happy');
+    } catch (error) {
+      push('assistant', `Couldn’t plan a fill: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [push]);
+
+  const quickProfile = useCallback(async () => {
+    const profile = await getProfile();
+    if (!profile) {
+      push('assistant', 'No profile is cached in this extension yet.');
+      return;
+    }
+    push(
+      'assistant',
+      `👤 ${profile.identity.fullName || '(no name)'} · ${profile.identity.email ?? 'no email'}\n` +
+        `${profile.skills.length} skill(s), ${profile.experience.length} role(s), ${profile.education.length} education entr(ies).`,
+    );
+  }, [push]);
+
+  const confirmPlan = useCallback(async () => {
+    if (!plan) return;
+    setBusy(true);
+    try {
+      const result = await applyFillPlan(plan.fields);
+      push(
+        'assistant',
+        `✅ Filled ${result.filled} field(s)${result.skipped.length ? `, skipped ${result.skipped.length}` : ''}. Nothing was submitted.`,
+      );
+      setMood('happy');
+      await callContent('setMood', { mood: 'happy' }).catch(() => undefined);
+    } catch (error) {
+      push('assistant', `Couldn’t fill the form: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setPlan(null);
+      setBusy(false);
+    }
+  }, [plan, push]);
+
+  const updateSetting = useCallback(
+    async (patch: Partial<Settings>) => {
+      const next = await saveSettings(patch);
+      setSettings(next);
+    },
+    [],
+  );
+
+  const refreshBridge = useCallback(async () => {
+    const status = await getBridgeStatus();
+    setBridge({ connected: status.connected, url: status.url });
+  }, []);
+
+  const connectBridge = useCallback(async () => {
+    await browser.runtime.sendMessage({ type: 'diggy:bridge-connect' });
+    window.setTimeout(() => void refreshBridge(), 1500);
+  }, [refreshBridge]);
+
+  const disconnectBridge = useCallback(async () => {
+    await browser.runtime.sendMessage({ type: 'diggy:bridge-disconnect' });
+    window.setTimeout(() => void refreshBridge(), 400);
+  }, [refreshBridge]);
+
+  /* --- render ----------------------------------------------------------- */
+
+  const bridgeLabel = bridge.connected ? 'Desktop linked' : 'Offline mode';
+
+  return (
+    <InkBackground className="h-full" opacity={0.5} density={5} interactive>
+      <div className="diggy-root flex h-full flex-col gap-3 p-3 text-ink">
+        <header className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <SketchBadge accent="violet" size="lg" dot>
+              Diggy
+            </SketchBadge>
+            <SketchBadge accent={bridge.connected ? 'green' : 'amber'} size="sm">
+              {bridgeLabel}
+            </SketchBadge>
+            <SketchBadge accent="sky" size="sm">
+              {brainProvider || settings?.provider || 'groq'}
+            </SketchBadge>
+          </div>
+          <SketchButton size="sm" variant="ghost" onClick={() => setShowSettings((value) => !value)}>
+            ⚙
+          </SketchButton>
+        </header>
+
+        <nav className="flex flex-wrap items-center gap-1" aria-label="Diggy sections">
+          {TABS.map((tab) => (
+            <SketchButton
+              key={tab.id}
+              size="sm"
+              variant={view === tab.id ? 'accent' : 'ghost'}
+              accent={tab.accent}
+              aria-pressed={view === tab.id}
+              onClick={() => setView(tab.id)}
+            >
+              <span aria-hidden="true">{tab.icon}</span>&nbsp;{tab.label}
+            </SketchButton>
+          ))}
+        </nav>
+
+        {view === 'chat' ? (
+          <>
+        {showSettings && settings ? (
+          <SketchCard tone="muted" className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Brain</span>
+              <SketchButton
+                size="sm"
+                variant={settings.provider === 'groq' ? 'accent' : 'ghost'}
+                accent="green"
+                onClick={() => void updateSetting({ provider: 'groq' })}
+              >
+                Groq
+              </SketchButton>
+              <SketchButton
+                size="sm"
+                variant={settings.provider === 'nvidia' ? 'accent' : 'ghost'}
+                accent="sky"
+                onClick={() => void updateSetting({ provider: 'nvidia' })}
+              >
+                NVIDIA
+              </SketchButton>
+            </div>
+            <SketchInput
+              label="Groq API key"
+              type="password"
+              placeholder="gsk_…"
+              value={settings.groqKey}
+              onChange={(event) => void updateSetting({ groqKey: event.target.value })}
+            />
+            <SketchInput
+              label="NVIDIA API key"
+              type="password"
+              placeholder="nvapi-…"
+              value={settings.nvidiaKey}
+              onChange={(event) => void updateSetting({ nvidiaKey: event.target.value })}
+            />
+            <SketchInput
+              label="Model (optional)"
+              placeholder="openai/gpt-oss-120b"
+              value={settings.model}
+              onChange={(event) => void updateSetting({ model: event.target.value })}
+            />
+            <SketchInput
+              label="Push-to-talk shortcut"
+              placeholder="Ctrl+Shift+Space"
+              value={settings.shortcut}
+              onChange={(event) => void updateSetting({ shortcut: event.target.value })}
+            />
+            <SketchInput
+              label="Crawler URL"
+              placeholder="http://127.0.0.1:17322"
+              value={settings.crawlerUrl}
+              onChange={(event) => void updateSetting({ crawlerUrl: event.target.value })}
+            />
+            <SketchInput
+              label="Desktop bridge URL"
+              value={settings.bridgeUrl}
+              onChange={(event) => void updateSetting({ bridgeUrl: event.target.value })}
+            />
+            <SketchInput
+              label="Desktop bridge token"
+              type="password"
+              placeholder="shared token (from the bridge server log)"
+              value={settings.bridgeToken}
+              onChange={(event) => void updateSetting({ bridgeToken: event.target.value })}
+            />
+            <div className="flex items-center gap-2">
+              <SketchButton size="sm" variant="accent" accent="green" onClick={() => void connectBridge()}>
+                Connect bridge
+              </SketchButton>
+              <SketchButton size="sm" variant="ghost" onClick={() => void disconnectBridge()}>
+                Disconnect
+              </SketchButton>
+              <span className="text-xs text-ink-500">{bridge.connected ? 'connected ✓' : 'offline'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <SketchToggle
+                label="Speak replies"
+                checked={settings.voiceEnabled}
+                onCheckedChange={(checked) => void updateSetting({ voiceEnabled: checked })}
+              />
+              <SketchToggle
+                label="Avatar bubble"
+                checked={settings.avatarVisible}
+                onCheckedChange={(checked) => void updateSetting({ avatarVisible: checked })}
+              />
+            </div>
+            <p className="text-[11px] leading-snug text-ink-500">
+              Hold <span className="font-semibold">{settings.shortcut}</span> on any page to talk to
+              Diggy — the reply appears above the bot and is spoken aloud. If one provider hits its
+              limit, Diggy automatically falls back to the other.
+            </p>
+            <div className="flex items-center gap-2">
+              <SketchButton size="sm" variant="ghost" onClick={() => void clearConversation()}>
+                Clear chat
+              </SketchButton>
+              <span className="text-[11px] text-ink-500">Active brain: {brainProvider || settings.provider}</span>
+            </div>
+          </SketchCard>
+        ) : null}
+
+        <div ref={scrollRef} className="diggy-scrollbar flex-1 space-y-2 overflow-y-auto pr-1">
+          {messages.map((item) => (
+            <div key={item.id} className={item.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              <SketchCard
+                tone={item.role === 'user' ? 'accent' : 'paper'}
+                accent={item.role === 'user' ? 'sky' : 'amber'}
+                padded
+                className="max-w-[92%] whitespace-pre-wrap text-sm leading-relaxed"
+              >
+                {item.content || (busy ? <ThinkingDots size="sm" /> : '')}
+              </SketchCard>
+            </div>
+          ))}
+        </div>
+
+        {plan ? (
+          <SketchCard tone="accent" accent="green" className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <SketchBadge accent="green" dot>
+                Confirm fill
+              </SketchBadge>
+              <span className="text-xs text-ink-500">{plan.fields.length} field(s)</span>
+            </div>
+            <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-ink-700">
+              {plan.fields.map((field) => (
+                <li key={field.fieldId} className="truncate">
+                  <span className="font-semibold">{field.profilePath ?? field.fieldId}</span> →{' '}
+                  {field.value.length > 40 ? `${field.value.slice(0, 40)}…` : field.value}
+                </li>
+              ))}
+            </ul>
+            <div className="flex items-center gap-2">
+              <SketchButton variant="accent" accent="green" size="sm" onClick={() => void confirmPlan()}>
+                Fill
+              </SketchButton>
+              <SketchButton variant="ghost" size="sm" onClick={() => setPlan(null)}>
+                Cancel
+              </SketchButton>
+              <span className="text-[11px] text-ink-500">Diggy never submits.</span>
+            </div>
+          </SketchCard>
+        ) : null}
+
+        <div className="flex flex-wrap gap-1.5">
+          <SketchButton size="sm" variant="paper" onClick={() => void quickReadPage()}>
+            Scan page
+          </SketchButton>
+          <SketchButton size="sm" variant="paper" onClick={() => void quickPlanFill()}>
+            Fill form
+          </SketchButton>
+          <SketchButton size="sm" variant="paper" onClick={() => void quickProfile()}>
+            My profile
+          </SketchButton>
+        </div>
+
+        <div className="flex items-end gap-2">
+          <SketchInput
+            containerClassName="flex-1"
+            placeholder="Ask Diggy…"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                void handleSend();
+              }
+            }}
+          />
+          <SketchButton
+            size="md"
+            variant={micReady ? 'accent' : 'paper'}
+            accent="pink"
+            aria-label="Enable microphone"
+            title={micReady ? 'Microphone ready' : 'Enable microphone'}
+            onClick={() => void enableVoice()}
+          >
+            🎙
+          </SketchButton>
+          <SketchButton
+            size="md"
+            variant="ink"
+            accent="sky"
+            loading={busy}
+            onClick={() => void handleSend()}
+          >
+            Send
+          </SketchButton>
+        </div>
+          </>
+        ) : view === 'vault' ? (
+          <VaultPanel onClose={() => setView('chat')} />
+        ) : view === 'reminders' ? (
+          <RemindersPanel onClose={() => setView('chat')} />
+        ) : view === 'watch' ? (
+          <WatchPanel onClose={() => setView('chat')} />
+        ) : view === 'apps' ? (
+          <AppsPanel onClose={() => setView('chat')} />
+        ) : (
+          <PagePanel onClose={() => setView('chat')} />
+        )}
+      </div>
+    </InkBackground>
+  );
+}

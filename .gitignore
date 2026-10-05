@@ -1,0 +1,19 @@
+node_modules
+dist
+build
+.output
+.wxt
+.turbo
+target
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Tooling metadata (local only)
+.commandcode/
+
+# The avatar model is synced from assets/avatar by scripts/sync-assets.mjs (postinstall)
+apps/demo/public/AvatarSample_I.vrm
+apps/extension/public/AvatarSample_I.vrm
