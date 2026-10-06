@@ -448,6 +448,39 @@ function scheduleReminderAlarm(reminder: Reminder): void {
   browser.alarms.create(`${ALARM_PREFIX}${reminder.id}`, { when: Math.max(due, Date.now() + 1000) });
 }
 
+/**
+ * A reminder is due — tell the user loudly.
+ *
+ * Notification + the in-page bubble (which also speaks it) + a happy mood and
+ * the celebrate animation, so it feels like the bot is excited for you rather
+ * than a silent note.
+ */
+async function fireReminder(reminder: Reminder): Promise<void> {
+  const at = new Date(reminder.dueAt);
+  const time = Number.isNaN(at.getTime())
+    ? ''
+    : at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const note = reminder.notes?.trim();
+  await showNotification(
+    `⏰ ${reminder.title}`,
+    note || (time ? `${time} ka reminder — abhi!` : 'Abhi ka time hai!'),
+  );
+
+  const tabId = await activeTabId();
+  if (tabId != null) {
+    const text = `⏰ ${reminder.title} — ${time ? `${time} ho gaya` : 'time ho gaya'}! ${note ?? 'Ab ye kaam karna hai.'}`;
+    const send = (payload: unknown): void => {
+      void browser.tabs.sendMessage(tabId, payload).catch(() => undefined);
+    };
+    // The bubble shows this AND speaks it (spoke is not set).
+    send({ type: 'diggy:agent-done', text, ok: true });
+    send({ type: 'diggy:content-exec', method: 'setMood', params: { mood: 'happy' } });
+    send({ type: 'diggy:content-exec', method: 'playAnim', params: { state: 'celebrate' } });
+  }
+
+  await updateReminder(reminder.id, { status: 'done' });
+}
+
 async function checkDueReminders(): Promise<void> {
   const now = Date.now();
   const reminders = await getReminders();
@@ -455,8 +488,7 @@ async function checkDueReminders(): Promise<void> {
     if (reminder.status !== 'pending') continue;
     const due = new Date(reminder.dueAt).getTime();
     if (Number.isNaN(due) || due > now) continue;
-    await showNotification(reminder.title, reminder.notes ?? 'Diggy reminder');
-    await updateReminder(reminder.id, { status: 'done' });
+    await fireReminder(reminder);
   }
 }
 
@@ -476,10 +508,7 @@ async function handleAlarm(alarm: { name: string }): Promise<void> {
   if (alarm.name.startsWith(ALARM_PREFIX)) {
     const id = alarm.name.slice(ALARM_PREFIX.length);
     const reminder = (await getReminders()).find((item) => item.id === id);
-    if (reminder && reminder.status === 'pending') {
-      await showNotification(reminder.title, reminder.notes ?? 'Diggy reminder');
-      await updateReminder(id, { status: 'done' });
-    }
+    if (reminder && reminder.status === 'pending') await fireReminder(reminder);
   }
 }
 

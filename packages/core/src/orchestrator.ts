@@ -20,7 +20,7 @@ import {
   type ToolSet,
 } from 'ai';
 import { MAX_AGENT_STEPS, type ChatMessage } from '@diggy/shared';
-import { DIGGY_SYSTEM_PROMPT } from './prompt';
+import { buildSystemPrompt } from './prompt';
 import { buildToolset } from './tools';
 import type { ToolContext } from './tools/types';
 
@@ -64,7 +64,7 @@ function resolveTools(options: RunAgentOptions): ToolSet {
 export function runAgent(options: RunAgentOptions): StreamTextResult<ToolSet, never> {
   return streamText({
     model: options.provider,
-    system: options.systemPrompt ?? DIGGY_SYSTEM_PROMPT,
+    system: options.systemPrompt ?? buildSystemPrompt(),
     messages: options.messages,
     tools: resolveTools(options),
     maxSteps: options.maxSteps ?? MAX_AGENT_STEPS,
@@ -85,7 +85,7 @@ export async function runAgentToText(
 ): Promise<GenerateTextResult<ToolSet, never>> {
   return generateText({
     model: options.provider,
-    system: options.systemPrompt ?? DIGGY_SYSTEM_PROMPT,
+    system: options.systemPrompt ?? buildSystemPrompt(),
     messages: options.messages,
     tools: resolveTools(options),
     maxSteps: options.maxSteps ?? MAX_AGENT_STEPS,

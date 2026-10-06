@@ -49,8 +49,35 @@ export const DIGGY_SYSTEM_PROMPT = `You are Diggy — a lively, warm animated co
 - If you cannot do something, say so plainly and offer the closest thing you can do.
 - End with a clear next step or question when the user needs to decide.`;
 
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+/**
+ * The user's local "now".
+ *
+ * Without this the model has no idea what today's date is, so "kal 5 baje" or
+ * "10 minute baad" produced a nonsense (often already-past) dueAt and the
+ * reminder never fired.
+ */
+export function currentTimeContext(now: Date = new Date()): string {
+  const offsetMinutes = -now.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMinutes);
+  const offset = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  const local = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  return [
+    '# Right now (use this for every relative time)',
+    `- Local time: ${local} (UTC${offset}) — ${now.toLocaleString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`,
+    `- UTC: ${now.toISOString()}`,
+    '- Resolve "10 minute baad", "kal 5 baje", "aaj shaam 7 baje", "tomorrow 9am" against the LOCAL time above and send an ISO-8601 dueAt for that instant.',
+    '- NEVER set a reminder in the past. If the time has already gone, move it to the next sensible future slot and tell the user which time you set.',
+  ].join('\n');
+}
+
 /** Build the system prompt, optionally appending host-specific instructions. */
 export function buildSystemPrompt(extra?: string): string {
-  if (!extra) return DIGGY_SYSTEM_PROMPT;
-  return `${DIGGY_SYSTEM_PROMPT}\n\n# Context\n${extra.trim()}`;
+  const base = `${DIGGY_SYSTEM_PROMPT}\n\n${currentTimeContext()}`;
+  if (!extra) return base;
+  return `${base}\n\n# Context\n${extra.trim()}`;
 }

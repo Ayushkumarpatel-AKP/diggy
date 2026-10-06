@@ -193,11 +193,24 @@ export class PlatformToolContext implements ToolContext {
   };
 
   createReminder = async (params: MethodParams['createReminder']): Promise<MethodResults['createReminder']> => {
+    // Models drift on dates. Normalise so a reminder can ALWAYS actually fire:
+    // an unparsable time becomes +10 min, and a time that has already gone is
+    // pulled forward instead of silently creating a reminder that never rings.
+    const parsed = new Date(params.dueAt);
+    let dueAt: string;
+    if (Number.isNaN(parsed.getTime())) {
+      dueAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    } else if (parsed.getTime() <= Date.now()) {
+      dueAt = new Date(Date.now() + 60_000).toISOString();
+    } else {
+      dueAt = parsed.toISOString();
+    }
+
     const reminder: Reminder = {
       id: makeId('rem'),
       title: params.title,
       notes: params.notes,
-      dueAt: params.dueAt,
+      dueAt,
       status: 'pending',
       createdAt: new Date().toISOString(),
       source: 'extension',
@@ -207,8 +220,29 @@ export class PlatformToolContext implements ToolContext {
     try {
       await browser.runtime.sendMessage(message);
     } catch {
-      /* background may be asleep; the reminder is still persisted */
+      /* background may be asleep; the reminder is still persisted and the
+         background's 1-minute tick will pick it up */
     }
+
+    // Show the exact time back — so the user can verify it at a glance.
+    const when = new Date(dueAt);
+    this.pushCard({
+      id: `rem-${reminder.id}`,
+      kind: 'generic',
+      title: `⏰ ${reminder.title}`,
+      subtitle: `Reminder set for ${when.toLocaleString(undefined, {
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        day: 'numeric',
+        month: 'short',
+      })}`,
+      badge: 'reminder set',
+      details: reminder.notes ? [{ label: 'Note', value: reminder.notes }] : undefined,
+      actions: [
+        { id: 'list', label: 'My reminders', kind: 'message', value: 'mere reminders dikhao', variant: 'ghost' },
+      ],
+    });
     return reminder;
   };
 
