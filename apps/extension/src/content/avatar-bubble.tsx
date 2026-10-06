@@ -542,10 +542,10 @@ export const BUBBLE_STYLES = `
 }
 .diggy-bubble__say {
   position: absolute;
-  /* Sit just above the bot's head (the container's top is mostly empty air).
-     Left-aligned to the bot — centring pushed a wide bubble off the screen —
-     and capped to the viewport so a tall/long reply is never cut off. */
-  bottom: calc(100% - 88px);
+  /* Just above the bot's head — the container's top edge *is* the head, so
+     overlapping it would cover the face. Left-aligned (centring pushed a wide
+     bubble off-screen) and capped to the viewport so nothing is ever cut. */
+  bottom: calc(100% + 2px);
   left: 0;
   width: max-content;
   max-width: min(296px, calc(100vw - 24px));
