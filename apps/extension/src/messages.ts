@@ -139,6 +139,12 @@ export interface RecWarmMessage {
   type: 'diggy:rec-warm';
 }
 
+/** Content script → background: open this URL in a new tab (reliable). */
+export interface OpenUrlMessage {
+  type: 'diggy:open-url';
+  url: string;
+}
+
 /** Background → everyone: a `BridgeEvent` arrived from the desktop companion. */
 export interface BridgeEventMessage {
   type: 'diggy:bridge-event';
@@ -209,6 +215,7 @@ export type ExtMessage =
   | RecStartMessage
   | RecStopMessage
   | RecWarmMessage
+  | OpenUrlMessage
   | AgentHeardMessage
   | BridgeEventMessage
   | ScheduleReminderMessage
@@ -285,6 +292,10 @@ export function isRecStop(message: unknown): message is RecStopMessage {
 
 export function isRecWarm(message: unknown): message is RecWarmMessage {
   return isObject(message) && message.type === 'diggy:rec-warm';
+}
+
+export function isOpenUrl(message: unknown): message is OpenUrlMessage {
+  return isObject(message) && message.type === 'diggy:open-url' && typeof message.url === 'string';
 }
 
 export function isAgentHeard(message: unknown): message is AgentHeardMessage {

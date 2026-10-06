@@ -421,7 +421,12 @@ export function AvatarBubble({
                   rel="noreferrer noopener"
                   onClick={(event) => {
                     event.preventDefault();
-                    if (card.url) window.open(card.url, '_blank', 'noopener');
+                    if (!card.url) return;
+                    // The background opens the tab: a content script's
+                    // window.open is frequently blocked by the page.
+                    void browser.runtime
+                      .sendMessage({ type: 'diggy:open-url', url: card.url })
+                      .catch(() => window.open(card.url, '_blank', 'noopener'));
                   }}
                 >
                   {card.image?.url || card.image?.dataUrl ? (

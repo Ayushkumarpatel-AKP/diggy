@@ -16,6 +16,7 @@ import {
   isContentCall,
   isFillApply,
   isGoogleCheck,
+  isOpenUrl,
   isRecStart,
   isRecStop,
   isRecWarm,
@@ -152,6 +153,14 @@ function handleMessage(
         return { ok: false, error: error instanceof Error ? error.message : 'Microphone unavailable.' };
       }
     })();
+  }
+  if (isOpenUrl(message)) {
+    // Opening from the background is reliable — a content script's window.open
+    // is often blocked by the page.
+    return browser.tabs
+      .create({ url: message.url })
+      .then(() => ({ ok: true }))
+      .catch(() => ({ ok: false }));
   }
   if (isBridgeConnect(message)) {
     return ensureBridge().then(

@@ -278,11 +278,19 @@ export function App(): JSX.Element {
 
   const handleCardAction = useCallback(
     async (action: CardAction) => {
-      if (action.kind === 'link') {
-        await browser.tabs.create({ url: action.value });
+      const value = action.value?.trim() ?? '';
+      // `play:<videoId>` from a video card — open the watch page, never send it
+      // to the model as text (that is why Play used to do nothing).
+      const play = /^play:([A-Za-z0-9_-]{6,})$/i.exec(value);
+      if (action.kind === 'link' || /^https?:\/\//i.test(value)) {
+        await browser.tabs.create({ url: value });
         return;
       }
-      await sendText(action.value);
+      if (play?.[1]) {
+        await browser.tabs.create({ url: `https://www.youtube.com/watch?v=${play[1]}` });
+        return;
+      }
+      await sendText(value);
     },
     [sendText],
   );
