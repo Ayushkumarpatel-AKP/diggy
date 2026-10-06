@@ -291,29 +291,61 @@ function looksRelevant(name: string, haystack: string): boolean {
 }
 
 /**
- * Last resort: find the newest video through a plain web search.
+ * Last resort: find the newest video through several web searches.
  *
- * Channel resolution fails for plenty of perfectly well-known names — localised
- * spellings, renamed channels, a request like "mr beast" split by a space. A
- * normal search for the video almost always returns a watch link.
+ * One query is not enough — engines rank differently and a single search often
+ * surfaces a channel page or an old upload. We run a handful of phrasings, pool
+ * every watch link we see, score them (relevance, result rank, "latest"-ness)
+ * and hand back the top-ranked one.
  */
 export async function searchLatestVideo(name: string): Promise<YouTubeVideo | undefined> {
   const clean = (name ?? '').trim();
   if (!clean) return undefined;
-  for (const query of [`${clean} latest video youtube`, `${clean} new video youtube`]) {
+
+  const queries = [
+    `${clean} latest video`,
+    `${clean} new video`,
+    `${clean} latest video youtube`,
+    `site:youtube.com ${clean}`,
+    `${clean} youtube`,
+  ];
+
+  const candidates = new Map<string, { video: YouTubeVideo; score: number }>();
+
+  for (const query of queries) {
+    let hits: Awaited<ReturnType<typeof searchRemote>> = [];
     try {
-      const hits = await searchRemote(query, 8);
-      for (const hit of hits) {
-        const videoId = videoIdFromUrl(hit.url);
-        if (!videoId) continue;
-        if (!looksRelevant(clean, `${hit.title} ${hit.snippet} ${hit.url}`)) continue;
-        return fromVideoId(videoId, hit.title.replace(/\s*[-–]\s*YouTube\s*$/i, ''));
-      }
+      hits = await searchRemote(query, 10);
     } catch {
-      /* try the next query */
+      continue;
     }
+
+    for (const [index, hit] of hits.entries()) {
+      const videoId = videoIdFromUrl(hit.url);
+      if (!videoId) continue;
+      const haystack = `${hit.title} ${hit.snippet} ${hit.url}`;
+
+      let score = Math.max(0, 10 - index); // earlier results rank higher
+      if (looksRelevant(clean, haystack)) score += 8;
+      if (/latest|newest|\bnew\b|recent|updated/i.test(haystack)) score += 3;
+      if (/channel|playlist|shorts/i.test(hit.url)) score -= 4;
+
+      const previous = candidates.get(videoId);
+      if (previous && previous.score >= score) continue;
+      const cleanTitle = decodeEntities(hit.title.replace(/\s*[-–]\s*YouTube\s*$/i, ''));
+      candidates.set(videoId, {
+        video: fromVideoId(videoId, cleanTitle),
+        score,
+      });
+    }
+
+    // A strong, relevant hit is enough — no need to hammer the search engine.
+    const best = [...candidates.values()].sort((a, b) => b.score - a.score)[0];
+    if (best && best.score >= 16) break;
   }
-  return undefined;
+
+  const ranked = [...candidates.values()].sort((a, b) => b.score - a.score);
+  return ranked[0]?.video;
 }
 
 const WANT_LATEST = /(latest|newest|recent|last|new|fresh|naya|nayi|nayā|navin|abhi ka)/i;
