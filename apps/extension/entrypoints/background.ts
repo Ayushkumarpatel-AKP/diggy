@@ -248,6 +248,15 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
         });
         return;
       }
+      // Say so plainly instead of falling through to a brain that has no
+      // YouTube tool (which used to produce an empty "no answer" reply).
+      send({
+        type: 'diggy:agent-done',
+        text: `“${channel}” naam ka channel nahi mila. Poora naam bolo — jaise “MrBeast ka latest video”.`,
+        ok: false,
+        spoke: true,
+      });
+      return;
     } catch {
       /* fall through to the normal brain */
     }

@@ -132,6 +132,11 @@ const LEGACY_SHORTCUTS = ['Ctrl+Shift+Space'];
 export async function getSettings(): Promise<Settings> {
   const stored = await readValue<Partial<Settings>>(STORAGE_KEYS.settings, {});
   if (stored.shortcut && LEGACY_SHORTCUTS.includes(stored.shortcut)) delete stored.shortcut;
+  // An empty key means "never set", not "deliberately off": fall back to the
+  // build's default so provider failover keeps working instead of silently
+  // leaving the user with a single brain.
+  if (!stored.groqKey) delete stored.groqKey;
+  if (!stored.nvidiaKey) delete stored.nvidiaKey;
   return { ...DEFAULT_SETTINGS, ...stored };
 }
 

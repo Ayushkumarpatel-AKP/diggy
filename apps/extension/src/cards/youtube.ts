@@ -194,7 +194,12 @@ function candidatePaths(input: string): string[] {
   if (raw.startsWith('@')) paths.push(`/${raw}`);
   else if (/^(channel|user|c)\//i.test(raw)) paths.push(`/${raw}`);
   else if (isId) return [];
-  else paths.push(`/@${raw}`);
+  else {
+    paths.push(`/@${raw}`);
+    // "mr beast" -> "@mrbeast"
+    const compact = raw.replace(/\s+/g, '');
+    if (compact !== raw) paths.push(`/@${compact}`);
+  }
   paths.push(`https://www.youtube.com/results?search_query=${encodeURIComponent(raw)}`);
   return paths;
 }
@@ -241,16 +246,19 @@ export async function latestVideos(channelIdOrHandle: string, max = 3): Promise<
   return parseChannelVideosPage(html, limit);
 }
 
-const WANT_LATEST = /(latest|newest|recent|last|naya|nayi|nayā|navin|abhi ka)/i;
+const WANT_LATEST = /(latest|newest|recent|last|new|fresh|naya|nayi|nayā|navin|abhi ka)/i;
+
+/** People say "video" in many shapes — and typo it. */
+const VIDEO_WORD = /(video|vdo|vid|cideo|clip|youtube|\byt\b)/i;
 
 const NOISE =
-  /\b(play|open|chala|chalao|dikha|dikhao|kro|kr|kar|kardo|do|dena|de|de|please|plz|show|watch)\b/gi;
+  /\b(play|open|chala|chalao|chalo|dikha|dikhao|khol|kholo|kholna|kholdo|lagao|laga|sunao|bhej|bhejo|dekhna|dekh|kro|kr|kar|kardo|do|dena|de|please|plz|show|watch|mujhe|me|mai|main)\b/gi;
 
 const FILLER =
-  /\b(on|pe|par|from|se|me|mey|of|ka|ki|ke|s|youtube|yt|video|upload|uploaded|abhi|latest|newest|recent|last|naya|nayi|nayā|navin)\b/gi;
+  /\b(on|pe|par|from|se|me|mey|of|ka|ki|ke|s|youtube|yt|video|vdo|vid|cideo|clip|upload|uploaded|abhi|latest|newest|recent|last|new|fresh|naya|nayi|nayā|navin)\b/gi;
 
 /**
- * "youtube pe MrBeast ka latest video play kr dena" → "MrBeast".
+ * "youtube pe MrBeast ka latest video kholo" → "MrBeast".
  *
  * Best-effort and deliberately conservative: anything that doesn't clearly
  * read as "the latest video of <channel>" returns `undefined`, so the message
@@ -258,7 +266,7 @@ const FILLER =
  */
 export function parseVideoRequest(text: string): string | undefined {
   const source = (text ?? '').trim();
-  if (!source || !/video/i.test(source)) return undefined;
+  if (!source || !VIDEO_WORD.test(source)) return undefined;
   if (!WANT_LATEST.test(source)) return undefined;
   const cleaned = source
     .replace(NOISE, ' ')
