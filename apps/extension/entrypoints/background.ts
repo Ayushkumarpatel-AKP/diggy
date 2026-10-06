@@ -36,7 +36,7 @@ import { getWatches, updateWatch } from '../src/watches';
 import { checkWatch } from '../src/web';
 import { addSeenIds, getSeenIds } from '../src/google';
 import { readCalendarSmart, readInboxSmart } from '../src/accounts';
-import { latestVideos, parseVideoRequest, videoCard } from '../src/cards';
+import { latestVideos, linkCard, parseVideoRequest, searchLatestVideo, videoCard } from '../src/cards';
 
 const ALARM_TICK = 'diggy:reminder-tick';
 const ALARM_PREFIX = 'diggy:reminder:';
@@ -227,36 +227,59 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
   send({ type: 'diggy:agent-delta', text: '' });
 
   // "…ka latest video" → resolve it here so the bubble can show a video card
-  // (thumbnail + Play) instead of a bare sentence. If that fails we do NOT give
-  // up: the brain has searchWeb/readPage, so hand it a hint and let it search.
-  let hint = '';
+  // (thumbnail + Play). The brain is a poor fallback for this (it tends to answer
+  // with "let me try again"), so do the work here and, if it truly fails, hand
+  // the user something concrete instead of an apology.
   const channel = parseVideoRequest(message.text);
   if (channel) {
+    let video: Awaited<ReturnType<typeof latestVideos>>[number] | undefined;
     try {
-      const video = (await latestVideos(channel, 1))[0];
-      if (video) {
-        send({
-          type: 'diggy:agent-done',
-          text: `Ye raha ${channel} ka latest video 👇`,
-          ok: true,
-          card: videoCard({
-            videoId: video.videoId,
-            title: video.title,
-            url: video.url,
-            thumbnail: video.thumbnail,
-            published: video.published,
-            channel,
-          }),
-        });
-        return;
-      }
+      video = (await latestVideos(channel, 1))[0];
     } catch {
-      /* leave it to the brain */
+      /* try the raw web search below */
     }
-    hint = `\n\n(System note: the user wants ${channel}'s latest YouTube video. Use searchWeb to find the watch link, then answer with it.)`;
+    if (!video) {
+      try {
+        video = await searchLatestVideo(channel);
+      } catch {
+        /* nothing else to try */
+      }
+    }
+
+    if (video) {
+      send({
+        type: 'diggy:agent-done',
+        text: `Ye raha ${channel} ka latest video 👇`,
+        ok: true,
+        card: videoCard({
+          videoId: video.videoId,
+          title: video.title,
+          url: video.url,
+          thumbnail: video.thumbnail,
+          published: video.published,
+          channel,
+        }),
+      });
+      return;
+    }
+
+    // Be honest and useful: the exact search that will find it.
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${channel} latest video`)}`;
+    send({
+      type: 'diggy:agent-done',
+      text: `Abhi "${channel}" ka video nahi mila. YouTube par ye search try karo — ya channel ka poora naam bolo.`,
+      ok: false,
+      spoke: true,
+      card: linkCard({
+        url: searchUrl,
+        title: `Search “${channel} latest video”`,
+        subtitle: 'YouTube search',
+      }),
+    });
+    return;
   }
 
-  const result = await askDiggy(`${message.text}${hint}`, {
+  const result = await askDiggy(message.text, {
     tabId,
     onDelta: (_chunk, full) => send({ type: 'diggy:agent-delta', text: full }),
   });
