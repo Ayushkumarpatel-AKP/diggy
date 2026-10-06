@@ -155,7 +155,7 @@ export function parseChannelVideosPage(html: string, max = 3): YouTubeVideo[] {
   return videos;
 }
 
-async function fetchText(url: string, timeoutMs = 20000): Promise<string | undefined> {
+async function fetchText(url: string, timeoutMs = 30000): Promise<string | undefined> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
