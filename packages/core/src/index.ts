@@ -7,6 +7,7 @@
  * or plain Node (tests).
  */
 export * from './providers';
+export * from './errors';
 export * from './tools';
 export * from './prompt';
 export * from './orchestrator';

@@ -6,7 +6,7 @@
  * and remembers that the provider is exhausted for a while so later turns go
  * straight to the working one.
  */
-import { createProvider, runAgent } from '@diggy/core';
+import { createProvider, errorDetail, friendlyError, runAgent } from '@diggy/core';
 import type { ToolContext } from '@diggy/core';
 import type { Settings } from './storage';
 
@@ -137,10 +137,14 @@ export async function runResilient(options: ResilientOptions): Promise<Resilient
   }
 
   return {
-    text: `⚠️ ${lastError || 'The model did not respond.'}`,
+    // Never show the raw provider payload — say what happened in one line.
+    text: friendlyError(lastError || 'The model did not respond.', {
+      provider: options.settings.provider,
+      switched,
+    }),
     provider: options.settings.provider,
     ok: false,
-    error: lastError,
+    error: errorDetail(lastError),
     context,
     switched,
   };

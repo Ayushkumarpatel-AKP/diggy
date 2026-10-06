@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toCoreMessages } from '@diggy/core';
+import { friendlyError, toCoreMessages } from '@diggy/core';
 import {
   InkBackground,
   SketchBadge,
@@ -215,9 +215,12 @@ export function App(): JSX.Element {
         const cards = context.takeCards();
         patchMessage(assistantId, cards[0] ? { content: text, card: cards[0] } : { content: text });
         setBrainProvider(result.provider);
-        if (active.voiceEnabled && text.length <= 320 && !text.startsWith('⚠️')) speakText(text);
+        // Only speak real answers — never read an error out loud.
+        if (active.voiceEnabled && result.ok && text.length <= 320) speakText(text);
       } catch (error) {
-        updateById(assistantId, () => `⚠️ ${error instanceof Error ? error.message : String(error)}`);
+        // Raw provider payloads stay in the console; the user gets one clear line.
+        console.warn('[Diggy] turn failed', error);
+        updateById(assistantId, () => friendlyError(error));
       } finally {
         setBusy(false);
       }
@@ -473,7 +476,8 @@ export function App(): JSX.Element {
       setMood('happy');
       await callContent('setMood', { mood: 'happy' }).catch(() => undefined);
     } catch (error) {
-      push('assistant', `Couldn’t fill the form: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn('[Diggy] fill failed', error);
+      push('assistant', friendlyError(error));
     } finally {
       setPlan(null);
       setBusy(false);
