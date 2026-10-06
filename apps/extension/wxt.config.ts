@@ -31,6 +31,15 @@ export default defineConfig({
       'identity',
     ],
     host_permissions: ['<all_urls>'],
+    // Browser-level push-to-talk. A page never sees a chord that another
+    // extension has claimed globally, so this guarantees the shortcut works.
+    // Commands have no key-up → it toggles (press to start, press again to send).
+    commands: {
+      'toggle-voice': {
+        suggested_key: { default: 'Ctrl+Shift+Space' },
+        description: 'Talk to Diggy (press to start, press again to send)',
+      },
+    },
     // The vault derives its key with Argon2id via WebAssembly (hash-wasm), which
     // MV3's default `script-src 'self'` blocks. `'wasm-unsafe-eval'` allows
     // WebAssembly compilation without permitting general eval.

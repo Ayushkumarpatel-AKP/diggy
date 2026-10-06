@@ -133,49 +133,10 @@ function handleMessage(
     return checkGoogle().then((result) => ({ ok: true, ...result }));
   }
   if (isRecStart(message)) {
-    return (async () => {
-      if (!(await ensureOffscreen())) {
-        return { ok: false, error: 'Recording is unavailable in this browser.' };
-      }
-      try {
-        const started = (await browser.runtime.sendMessage({ type: 'diggy:offscreen-start' })) as
-          | { ok?: boolean; error?: string }
-          | undefined;
-        if (started?.ok) return { ok: true };
-        return {
-          ok: false,
-          error: started?.error ?? 'Microphone unavailable — click 🎙 in the side panel once to allow it.',
-        };
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : 'Microphone unavailable.' };
-      }
-    })();
+    return beginVoice();
   }
   if (isRecStop(message)) {
-    return (async () => {
-      const recorded = (await browser.runtime
-        .sendMessage({ type: 'diggy:offscreen-stop' })
-        .catch(() => ({ ok: false, error: 'Microphone unavailable.' }))) as
-        | { ok?: boolean; base64?: string; mime?: string; error?: string }
-        | undefined;
-      if (!recorded?.ok || !recorded.base64) {
-        return { ok: false, error: recorded?.error ?? 'No audio captured — try holding the key a little longer.' };
-      }
-      try {
-        const text = await transcribe(recorded.base64, recorded.mime ?? 'audio/webm');
-        if (!text) return { ok: false, error: 'I could not hear anything.' };
-        // Show the user what was heard before the reply streams in.
-        if (sender?.tab?.id != null) {
-          void browser.tabs
-            .sendMessage(sender.tab.id, { type: 'diggy:agent-heard', text })
-            .catch(() => undefined);
-        }
-        void runAsk({ type: 'diggy:ask', text }, sender?.tab?.id);
-        return { ok: true, text };
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
-      }
-    })();
+    return finishVoice(sender?.tab?.id);
   }
   if (isRecWarm(message)) {
     return (async () => {
@@ -388,6 +349,85 @@ async function transcribe(base64: string, mime: string): Promise<string> {
   }
   const payload = (await response.json()) as { text?: string };
   return (payload.text ?? '').trim();
+}
+
+/* ------------------------------------------------------------------ *
+ * Voice — start / stop, shared by the shortcut, the panel and commands
+ * ------------------------------------------------------------------ */
+
+/** Start recording. */
+async function beginVoice(): Promise<{ ok: boolean; error?: string }> {
+  if (!(await ensureOffscreen())) {
+    return { ok: false, error: 'Recording is unavailable in this browser.' };
+  }
+  try {
+    const started = (await browser.runtime.sendMessage({ type: 'diggy:offscreen-start' })) as
+      | { ok?: boolean; error?: string }
+      | undefined;
+    if (started?.ok) return { ok: true };
+    return {
+      ok: false,
+      error: started?.error ?? 'Microphone unavailable — click 🎙 in the side panel once to allow it.',
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Microphone unavailable.' };
+  }
+}
+
+/** Stop, transcribe with Whisper, then run the brain. */
+async function finishVoice(tabId?: number): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const recorded = (await browser.runtime
+    .sendMessage({ type: 'diggy:offscreen-stop' })
+    .catch(() => ({ ok: false, error: 'Microphone unavailable.' }))) as
+    | { ok?: boolean; base64?: string; mime?: string; error?: string }
+    | undefined;
+  if (!recorded?.ok || !recorded.base64) {
+    return { ok: false, error: recorded?.error ?? 'No audio captured — try holding the key a little longer.' };
+  }
+  try {
+    const text = await transcribe(recorded.base64, recorded.mime ?? 'audio/webm');
+    if (!text) return { ok: false, error: 'I could not hear anything.' };
+    // Show the user what was heard before the reply streams in.
+    if (tabId != null) {
+      void browser.tabs.sendMessage(tabId, { type: 'diggy:agent-heard', text }).catch(() => undefined);
+    }
+    void runAsk({ type: 'diggy:ask', text }, tabId);
+    return { ok: true, text };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Browser-level shortcut (`commands`).
+ *
+ * A page never sees a chord another extension has already claimed as a global
+ * command, so this is the guaranteed keyboard path. Commands have no key-up, so
+ * it toggles: press to start, press again to send.
+ */
+let commandRecording = false;
+
+async function toggleVoiceCommand(): Promise<void> {
+  const tabId = (await activeTabId()) ?? undefined;
+  const tell = (payload: unknown): void => {
+    if (tabId == null) return;
+    void browser.tabs.sendMessage(tabId, payload).catch(() => undefined);
+  };
+
+  if (commandRecording) {
+    commandRecording = false;
+    const result = await finishVoice(tabId);
+    if (!result.ok) tell({ type: 'diggy:agent-done', text: result.error ?? 'Voice failed.', ok: false });
+    return;
+  }
+
+  const started = await beginVoice();
+  if (!started.ok) {
+    tell({ type: 'diggy:agent-done', text: started.error ?? 'Microphone unavailable.', ok: false });
+    return;
+  }
+  commandRecording = true;
+  tell({ type: 'diggy:agent-delta', text: '🎙 Listening… press the shortcut again to send.' });
 }
 
 /* ------------------------------------------------------------------ *
@@ -687,6 +727,11 @@ export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: unknown, sender: unknown) =>
     handleMessage(message, sender as { tab?: { id?: number } }),
   );
+  // Browser-level shortcut: works even when the page never receives the chord
+  // (another extension, or the browser itself, may have claimed it).
+  browser.commands.onCommand.addListener((command) => {
+    if (command === 'toggle-voice') void toggleVoiceCommand();
+  });
   browser.alarms.onAlarm.addListener((alarm) => {
     void handleAlarm(alarm);
   });
