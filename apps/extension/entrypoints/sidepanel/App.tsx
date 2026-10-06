@@ -307,17 +307,18 @@ export function App(): JSX.Element {
       // 1. Grant the mic for the whole extension (the offscreen recorder reuses it).
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
-      setMicReady(true);
       // 2. Warm the offscreen recorder so the first push-to-talk is instant.
-      const warm = await recWarm().catch(() => ({ ok: false }) as { ok?: boolean; error?: string });
-      if (warm?.ok === false && 'error' in warm && warm.error) {
-        push('assistant', `🎙 Permission granted, but the recorder said: ${warm.error}`);
-        return;
+      const warm = await recWarm();
+      if (warm?.ok === true) {
+        setMicReady(true);
+        push(
+          'assistant',
+          `🎙 Microphone ready — hold ${settings?.shortcut || 'Ctrl+Shift+Space'} on any page (or right here in the panel), speak, then release.`,
+        );
+      } else {
+        setMicReady(false);
+        push('assistant', `🎙 ${warm?.error ?? 'Microphone could not be prepared — try again.'}`);
       }
-      push(
-        'assistant',
-        `🎙 Microphone ready — hold ${settings?.shortcut || 'Ctrl+Shift+Space'} on any page (or right here in the panel), speak, then release.`,
-      );
     } catch {
       push('assistant', 'Microphone permission was denied. Allow it for this extension and retry.');
     }

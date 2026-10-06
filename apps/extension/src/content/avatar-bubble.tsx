@@ -271,6 +271,8 @@ export function AvatarBubble({
       // The background owns the mic (offscreen recorder) + Whisper transcription.
       const result = await recStart();
       if (!result?.ok) {
+        // eslint-disable-next-line no-console
+        console.warn('[Diggy] voice start failed', result);
         holdingRef.current = false;
         setHolding(false);
         setPhase('reply');

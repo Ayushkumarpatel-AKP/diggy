@@ -291,17 +291,54 @@ export function isAgentHeard(message: unknown): message is AgentHeardMessage {
   return isObject(message) && message.type === 'diggy:agent-heard';
 }
 
-/** Ask the background to start/stop a voice recording (fire-and-forget). */
+/**
+ * Send a message and retry when nothing answers.
+ *
+ * An MV3 service worker can be asleep when the first message arrives; every so
+ * often that first send resolves with `undefined` instead of the reply. Three
+ * quick attempts make push-to-talk reliable without any user-visible retry.
+ */
+async function sendWithRetry<T>(message: unknown, attempts = 3): Promise<T | undefined> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const result = (await browser.runtime.sendMessage(message)) as T | undefined;
+      if (result !== undefined) return result;
+    } catch {
+      /* the worker may still be starting */
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return undefined;
+}
+
+const NO_RESPONSE = "Diggy's recorder did not answer — try again.";
+
+/** Ask the background to start/stop a voice recording. */
 export async function recStart(): Promise<{ ok?: boolean; error?: string }> {
-  return (await browser.runtime.sendMessage({ type: 'diggy:rec-start' })) ?? {};
+  return (
+    (await sendWithRetry<{ ok?: boolean; error?: string }>({ type: 'diggy:rec-start' })) ?? {
+      ok: false,
+      error: NO_RESPONSE,
+    }
+  );
 }
 
 export async function recStop(): Promise<{ ok?: boolean; text?: string; error?: string }> {
-  return (await browser.runtime.sendMessage({ type: 'diggy:rec-stop' })) ?? {};
+  return (
+    (await sendWithRetry<{ ok?: boolean; text?: string; error?: string }>({ type: 'diggy:rec-stop' })) ?? {
+      ok: false,
+      error: NO_RESPONSE,
+    }
+  );
 }
 
 export async function recWarm(): Promise<{ ok?: boolean; error?: string }> {
-  return (await browser.runtime.sendMessage({ type: 'diggy:rec-warm' })) ?? {};
+  return (
+    (await sendWithRetry<{ ok?: boolean; error?: string }>({ type: 'diggy:rec-warm' })) ?? {
+      ok: false,
+      error: NO_RESPONSE,
+    }
+  );
 }
 
 /** Ask the background to run the agent for `text` (fire-and-forget). */
