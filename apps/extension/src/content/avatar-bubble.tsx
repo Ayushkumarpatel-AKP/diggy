@@ -81,7 +81,7 @@ function getRecognition(): RecognitionCtor | undefined {
 
 type Phase = 'idle' | 'listening' | 'thinking' | 'reply' | 'confirm';
 
-const MAX_BUBBLE_CHARS = 150;
+const MAX_BUBBLE_CHARS = 240;
 
 export interface AvatarBubbleProps {
   modelUrl: string;
@@ -513,8 +513,8 @@ export const BUBBLE_STYLES = `
   --diggy-ink: #1b1917;
   position: fixed;
   bottom: 0;
-  width: 232px;
-  height: 312px;
+  width: 212px;
+  height: 244px;
   z-index: 2147483600;
   pointer-events: none;
   font-family: ui-rounded, 'Segoe UI', system-ui, sans-serif;
@@ -542,11 +542,16 @@ export const BUBBLE_STYLES = `
 }
 .diggy-bubble__say {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  /* Sit just above the bot's head (the container's top is mostly empty air).
+     Left-aligned to the bot — centring pushed a wide bubble off the screen —
+     and capped to the viewport so a tall/long reply is never cut off. */
+  bottom: calc(100% - 88px);
+  left: 0;
   width: max-content;
-  max-width: 258px;
+  max-width: min(296px, calc(100vw - 24px));
+  max-height: min(56vh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -561,6 +566,7 @@ export const BUBBLE_STYLES = `
   line-height: 1.35;
   animation: diggy-say-in 180ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
+.diggy-bubble[data-side='right'] .diggy-bubble__say { left: auto; right: 0; }
 .diggy-bubble__card {
   display: flex;
   flex-direction: column;
@@ -692,8 +698,8 @@ export const BUBBLE_STYLES = `
   transform: scale(1.08);
 }
 @keyframes diggy-say-in {
-  0% { transform: translateX(-50%) translateY(6px) scale(0.94); opacity: 0; }
-  100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+  0% { transform: translateY(6px) scale(0.94); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .diggy-bubble__say { animation: none; }
