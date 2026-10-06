@@ -350,6 +350,9 @@ export async function searchLatestVideo(name: string): Promise<YouTubeVideo | un
 
 const WANT_LATEST = /(latest|newest|recent|last|new|fresh|naya|nayi|nayā|navin|abhi ka)/i;
 
+/** "kholo / chalao / dikhao / play" — an explicit ask, so "latest" is implied. */
+const PLAY_VERB = /\b(khol|kholo|kholna|chala|chalao|chalo|dikha|dikhao|play|open|show|sunao|dekhna|dekh)\b/i;
+
 /** People say "video" in many shapes — and typo it. */
 const VIDEO_WORD = /(video|vdo|vid|cideo|clip|youtube|\byt\b)/i;
 
@@ -369,7 +372,8 @@ const FILLER =
 export function parseVideoRequest(text: string): string | undefined {
   const source = (text ?? '').trim();
   if (!source || !VIDEO_WORD.test(source)) return undefined;
-  if (!WANT_LATEST.test(source)) return undefined;
+  // "latest" is implied by an explicit ask ("mr beast ka video kholo").
+  if (!WANT_LATEST.test(source) && !PLAY_VERB.test(source)) return undefined;
   const cleaned = source
     .replace(NOISE, ' ')
     .replace(FILLER, ' ')

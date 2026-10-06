@@ -23,6 +23,7 @@ export interface SearchOptions {
 }
 
 export const DUCKDUCKGO_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/';
+export const BING_ENDPOINT = 'https://www.bing.com/search';
 export const MAX_SEARCH_RESULTS = 10;
 
 // A realistic browser User-Agent: DuckDuckGo serves an empty/challenge page to
@@ -95,8 +96,61 @@ export function parseDuckDuckGoHtml(
   return results;
 }
 
+/** Unwrap Bing's `bing.com/ck/a?...&u=a1<base64>` click-tracking link. */
+export function decodeBingUrl(href: string): string {
+  try {
+    const url = new URL(href, 'https://www.bing.com');
+    if (!/bing\.com$/i.test(url.hostname)) return url.toString();
+    const u = url.searchParams.get('u');
+    if (!u) return url.toString();
+    const encoded = u.startsWith('a1') ? u.slice(2) : u;
+    const decoded = Buffer.from(encoded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    return /^https?:\/\//i.test(decoded) ? decoded : url.toString();
+  } catch {
+    return href;
+  }
+}
+
 /**
- * Keyless web search backed by DuckDuckGo's HTML endpoint.
+ * Parse Bing's HTML results. Pure and offline — exported for tests.
+ *
+ * Used as a fallback: DuckDuckGo's HTML endpoint answers heavily-rate-limited
+ * clients with a challenge page (or a 5xx), which used to leave every search
+ * empty.
+ */
+export function parseBingHtml(
+  html: string,
+  options: { maxResults?: number } = {},
+): SearchResult[] {
+  const max = Math.max(1, options.maxResults ?? MAX_SEARCH_RESULTS);
+  const dom = new JSDOM(html);
+  const document = dom.window.document;
+
+  const results: SearchResult[] = [];
+  const seen = new Set<string>();
+
+  for (const node of Array.from(document.querySelectorAll('li.b_algo'))) {
+    if (results.length >= max) break;
+    const anchor = node.querySelector('h2 a[href]') ?? node.querySelector('a[href]');
+    const href = anchor?.getAttribute('href');
+    if (!href) continue;
+    const url = decodeBingUrl(href);
+    if (!/^https?:/i.test(url)) continue;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    results.push({
+      title: clean(anchor?.textContent) || url,
+      url,
+      snippet: clean(node.querySelector('.b_caption p, .b_lineclamp2, p')?.textContent),
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Keyless web search backed by DuckDuckGo's HTML endpoint, with a Bing
+ * fallback.
  *
  * Returns `{title, url, snippet}[]` (at most {@link MAX_SEARCH_RESULTS}). When
  * the network is disabled (tests / `DIGGY_OFFLINE`) this resolves to `[]`
@@ -110,27 +164,41 @@ export async function searchWeb(
   if (!q) return [];
   if (!options.allowNetwork && isNetworkDisabled()) return [];
 
-  const endpoint = options.endpoint ?? DUCKDUCKGO_HTML_ENDPOINT;
-  const url = `${endpoint}${endpoint.includes('?') ? '&' : '?'}q=${encodeURIComponent(q)}`;
   const fetchImpl: FetchLike = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 10000;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10000);
-  try {
-    const response = await fetchImpl(url, {
-      method: 'GET',
-      headers: {
-        'user-agent': USER_AGENT,
-        accept: 'text/html,application/xhtml+xml',
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`DuckDuckGo search failed with HTTP ${response.status}`);
+  const attempt = async (url: string): Promise<string | undefined> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetchImpl(url, {
+        method: 'GET',
+        headers: {
+          'user-agent': USER_AGENT,
+          accept: 'text/html,application/xhtml+xml',
+          'accept-language': 'en-US,en;q=0.9',
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) return undefined;
+      return await response.text();
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
     }
-    const html = await response.text();
-    return parseDuckDuckGoHtml(html, { maxResults: options.maxResults });
-  } finally {
-    clearTimeout(timer);
-  }
+  };
+
+  const endpoint = options.endpoint ?? DUCKDUCKGO_HTML_ENDPOINT;
+  const duckUrl = `${endpoint}${endpoint.includes('?') ? '&' : '?'}q=${encodeURIComponent(q)}`;
+  const duckHtml = await attempt(duckUrl);
+  const fromDuck = duckHtml ? parseDuckDuckGoHtml(duckHtml, { maxResults: options.maxResults }) : [];
+  if (fromDuck.length > 0) return fromDuck;
+
+  // An explicit endpoint means a test fixture — never reach out to Bing.
+  if (options.endpoint) return fromDuck;
+  if (!options.allowNetwork && isNetworkDisabled()) return [];
+
+  const bingHtml = await attempt(`${BING_ENDPOINT}?q=${encodeURIComponent(q)}`);
+  return bingHtml ? parseBingHtml(bingHtml, { maxResults: options.maxResults }) : fromDuck;
 }
