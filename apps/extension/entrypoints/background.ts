@@ -197,6 +197,35 @@ function handleMessage(
 }
 
 /* ------------------------------------------------------------------ *
+ * In-page bot: re-mount after an extension reload
+ * ------------------------------------------------------------------ */
+
+/**
+ * Re-mount the bot in tabs that were already open when the extension reloaded.
+ *
+ * Reloading Diggy makes every existing content script's `onInvalidated` cleanup
+ * run (it removes the bot), and the browser does not inject the new content
+ * script into tabs that are already loaded — so the bot would stay gone until a
+ * manual page refresh. This injects it back.
+ */
+async function reinjectIntoOpenTabs(): Promise<void> {
+  try {
+    const tabs = await browser.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+    await Promise.all(
+      tabs.map((tab) =>
+        tab.id == null
+          ? Promise.resolve()
+          : browser.scripting
+              .executeScript({ target: { tabId: tab.id }, files: ['content-scripts/content.js'] })
+              .catch(() => undefined),
+      ),
+    );
+  } catch {
+    /* best effort — never block startup */
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Agent (voice / push-to-talk brain)
  * ------------------------------------------------------------------ */
 
@@ -613,9 +642,11 @@ export default defineBackground(() => {
   });
   browser.runtime.onInstalled.addListener(() => {
     void bootstrap();
+    void reinjectIntoOpenTabs();
   });
   browser.runtime.onStartup.addListener(() => {
     void bootstrap();
+    void reinjectIntoOpenTabs();
   });
 
   // Restart the bridge if the URL/token changes.

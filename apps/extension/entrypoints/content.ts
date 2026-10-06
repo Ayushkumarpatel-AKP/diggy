@@ -146,6 +146,14 @@ export default defineContentScript({
   matches: ['<all_urls>'],
   runAt: 'document_idle',
   main(ctx) {
+    // Guard: the background re-injects this file into tabs that were already
+    // open when the extension (re)loaded, so `main` can run twice in the same
+    // isolated world. Only the first run mounts and registers listeners —
+    // `onInvalidated` clears the flag so the re-injection can take over.
+    const scope = window as unknown as { __diggyContentMounted?: boolean };
+    if (scope.__diggyContentMounted) return;
+    scope.__diggyContentMounted = true;
+
     const root = mountBubble();
 
     // Throttled, silent-by-default observer: it only marks the DOM dirty and
@@ -174,6 +182,7 @@ export default defineContentScript({
       observer.stop();
       root?.unmount();
       document.getElementById(HOST_ID)?.remove();
+      scope.__diggyContentMounted = false;
     });
   },
 });
