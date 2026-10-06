@@ -9,7 +9,7 @@ import {
   SketchToggle,
   ThinkingDots,
 } from '@diggy/ui';
-import type { AvatarMood, ChatMessage, Profile } from '@diggy/shared';
+import type { AvatarMood, CardAction, ChatMessage, Profile, RichCard } from '@diggy/shared';
 import { callContent, getBridgeStatus, type BridgeEventMessage } from '../../src/messages';
 import {
   applyFillPlan,
@@ -23,9 +23,22 @@ import { RemindersPanel } from './RemindersPanel';
 import { PagePanel } from './PagePanel';
 import { WatchPanel } from './WatchPanel';
 import { AppsPanel } from './AppsPanel';
+import { PluginsPanel } from './PluginsPanel';
+import { CardView } from './CardView';
 import { getProfile, getSettings, saveSettings, type Settings } from '../../src/storage';
 import { runResilient } from '../../src/brain';
 import { clearChat, loadChat, saveChat } from '../../src/chat-memory';
+import {
+  captureWithHighlight,
+  latestVideos,
+  parseVideoRequest,
+  snapshotCard,
+  videoCard,
+} from '../../src/cards';
+
+function messageWithCard(role: ChatMessage['role'], content: string, card?: RichCard): ChatMessage {
+  return card ? { ...message(role, content), card } : message(role, content);
+}
 
 /* ------------------------------------------------------------------ *
  * Speech recognition (Web Speech API) — minimal local typings
@@ -75,7 +88,7 @@ function message(role: ChatMessage['role'], content: string): ChatMessage {
   return { id: uid(), role, content, createdAt: new Date().toISOString() };
 }
 
-type View = 'chat' | 'vault' | 'reminders' | 'watch' | 'apps' | 'page';
+type View = 'chat' | 'vault' | 'reminders' | 'watch' | 'plugins' | 'apps' | 'page' | 'settings';
 
 const TABS: ReadonlyArray<{
   id: View;
@@ -87,6 +100,7 @@ const TABS: ReadonlyArray<{
   { id: 'vault', label: 'Profile', icon: '🔐', accent: 'pink' },
   { id: 'reminders', label: 'Reminders', icon: '⏰', accent: 'amber' },
   { id: 'watch', label: 'Watch', icon: '👀', accent: 'pink' },
+  { id: 'plugins', label: 'Plugins', icon: '🧩', accent: 'green' },
   { id: 'apps', label: 'Apps', icon: '🔗', accent: 'green' },
   { id: 'page', label: 'Page', icon: '🌐', accent: 'green' },
 ];
@@ -110,7 +124,6 @@ export function App(): JSX.Element {
   const [mood, setMood] = useState<AvatarMood>('neutral');
   const [settings, setSettings] = useState<Settings | null>(null);
   const [bridge, setBridge] = useState<{ connected: boolean; url: string }>({ connected: false, url: '' });
-  const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState<View>('chat');
   const [brainProvider, setBrainProvider] = useState<string>('');
 
@@ -130,6 +143,10 @@ export function App(): JSX.Element {
     setMessages((current) =>
       current.map((item) => (item.id === id ? { ...item, content: updater(item.content) } : item)),
     );
+  }, []);
+
+  const patchMessage = useCallback((id: string, patch: Partial<ChatMessage>) => {
+    setMessages((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }, []);
 
   /* --- init ------------------------------------------------------------- */
@@ -183,6 +200,7 @@ export function App(): JSX.Element {
         { id: assistantId, role: 'assistant', content: '', createdAt: new Date().toISOString() },
       ]);
       setBusy(true);
+      context.takeCards(); // drop anything stale from an earlier turn
       try {
         const active = settings ?? (await getSettings());
         // Automatic Groq ⇄ NVIDIA failover happens inside runResilient.
@@ -193,7 +211,8 @@ export function App(): JSX.Element {
           onDelta: (_delta, full) => updateById(assistantId, () => full),
         });
         const text = result.text.trim() || '(Diggy had nothing to add.)';
-        updateById(assistantId, () => text);
+        const cards = context.takeCards();
+        patchMessage(assistantId, cards[0] ? { content: text, card: cards[0] } : { content: text });
         setBrainProvider(result.provider);
         if (active.voiceEnabled && text.length <= 320 && !text.startsWith('⚠️')) speakText(text);
       } catch (error) {
@@ -202,18 +221,74 @@ export function App(): JSX.Element {
         setBusy(false);
       }
     },
-    [settings, context, updateById],
+    [settings, context, updateById, patchMessage],
+  );
+
+  const sendText = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || busy) return;
+      const userMessage = message('user', trimmed);
+      const history = [...messages, userMessage];
+      setMessages(history);
+
+      // "MrBeast ka latest video" → resolve it here so we can show a real card.
+      const channel = parseVideoRequest(trimmed);
+      if (channel) {
+        setBusy(true);
+        let handled = false;
+        try {
+          const video = (await latestVideos(channel, 1))[0];
+          setMessages([
+            ...history,
+            video
+              ? messageWithCard(
+                  'assistant',
+                  `Ye raha ${channel} ka latest video 👇`,
+                  videoCard({
+                    videoId: video.videoId,
+                    title: video.title,
+                    url: video.url,
+                    thumbnail: video.thumbnail,
+                    published: video.published,
+                    channel,
+                  }),
+                )
+              : message('assistant', `I couldn’t find a channel called “${channel}”. Try the exact name.`),
+          ]);
+          setMood(video ? 'happy' : 'neutral');
+          handled = true;
+        } catch {
+          /* fall through to the model */
+        } finally {
+          setBusy(false);
+        }
+        if (handled) return;
+        setMessages(history);
+      }
+
+      await respond(history);
+    },
+    [busy, messages, respond],
+  );
+
+  const handleCardAction = useCallback(
+    async (action: CardAction) => {
+      if (action.kind === 'link') {
+        await browser.tabs.create({ url: action.value });
+        return;
+      }
+      await sendText(action.value);
+    },
+    [sendText],
   );
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || busy) return;
     setInput('');
-    const userMessage = message('user', text);
-    const history = [...messages, userMessage];
-    setMessages(history);
-    await respond(history);
-  }, [input, busy, messages, respond]);
+    await sendText(text);
+  }, [input, busy, sendText]);
 
   const clearConversation = useCallback(async () => {
     await clearChat();
@@ -307,10 +382,32 @@ export function App(): JSX.Element {
     setBusy(true);
     try {
       const result = await applyFillPlan(plan.fields);
-      push(
-        'assistant',
-        `✅ Filled ${result.filled} field(s)${result.skipped.length ? `, skipped ${result.skipped.length}` : ''}. Nothing was submitted.`,
-      );
+      let card: RichCard | undefined;
+      try {
+        // Proof, not a promise: the filled page, exactly as it looks right now.
+        const imageDataUrl = await captureWithHighlight();
+        const page = await callContent('readPage', { includeFields: false }).catch(() => undefined);
+        card = snapshotCard({
+          title: `Filled ${result.filled} field(s)`,
+          subtitle: 'Nothing was submitted — check it, then submit yourself.',
+          imageDataUrl,
+          url: page?.url,
+          badge: 'snapshot',
+          actions: page?.url
+            ? [{ id: 'open', label: 'Open page', kind: 'link', value: page.url, variant: 'primary' }]
+            : undefined,
+        });
+      } catch {
+        /* a snapshot is nice-to-have, never required */
+      }
+      setMessages((current) => [
+        ...current,
+        messageWithCard(
+          'assistant',
+          `✅ Filled ${result.filled} field(s)${result.skipped.length ? `, skipped ${result.skipped.length}` : ''}. Nothing was submitted.`,
+          card,
+        ),
+      ]);
       setMood('happy');
       await callContent('setMood', { mood: 'happy' }).catch(() => undefined);
     } catch (error) {
@@ -363,12 +460,19 @@ export function App(): JSX.Element {
               {brainProvider || settings?.provider || 'groq'}
             </SketchBadge>
           </div>
-          <SketchButton size="sm" variant="ghost" onClick={() => setShowSettings((value) => !value)}>
+          <SketchButton
+            size="sm"
+            variant={view === 'settings' ? 'accent' : 'ghost'}
+            accent="sky"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => setView((current) => (current === 'settings' ? 'chat' : 'settings'))}
+          >
             ⚙
           </SketchButton>
         </header>
 
-        <nav className="flex flex-wrap items-center gap-1" aria-label="Diggy sections">
+        <nav className="flex items-center gap-1" aria-label="Diggy sections">
           {TABS.map((tab) => (
             <SketchButton
               key={tab.id}
@@ -376,16 +480,21 @@ export function App(): JSX.Element {
               variant={view === tab.id ? 'accent' : 'ghost'}
               accent={tab.accent}
               aria-pressed={view === tab.id}
+              aria-label={tab.label}
+              title={tab.label}
               onClick={() => setView(tab.id)}
             >
-              <span aria-hidden="true">{tab.icon}</span>&nbsp;{tab.label}
+              <span aria-hidden="true">{tab.icon}</span>
             </SketchButton>
           ))}
+          <span className="ml-1 truncate text-xs font-semibold text-ink-500">
+            {view === 'settings' ? 'Settings' : (TABS.find((tab) => tab.id === view)?.label ?? '')}
+          </span>
         </nav>
 
-        {view === 'chat' ? (
-          <>
-        {showSettings && settings ? (
+        {view === 'settings' ? (
+          <div className="diggy-scrollbar flex-1 space-y-3 overflow-y-auto pr-1">
+        {settings ? (
           <SketchCard tone="muted" className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Brain</span>
@@ -439,6 +548,12 @@ export function App(): JSX.Element {
               onChange={(event) => void updateSetting({ crawlerUrl: event.target.value })}
             />
             <SketchInput
+              label="Plugins backend URL"
+              placeholder="http://127.0.0.1:17323"
+              value={settings.apiUrl}
+              onChange={(event) => void updateSetting({ apiUrl: event.target.value })}
+            />
+            <SketchInput
               label="Desktop bridge URL"
               value={settings.bridgeUrl}
               onChange={(event) => void updateSetting({ bridgeUrl: event.target.value })}
@@ -484,18 +599,29 @@ export function App(): JSX.Element {
             </div>
           </SketchCard>
         ) : null}
+            <SketchButton size="sm" variant="ghost" onClick={() => setView('chat')}>
+              ← Back to chat
+            </SketchButton>
+          </div>
+        ) : view === 'chat' ? (
+          <>
 
         <div ref={scrollRef} className="diggy-scrollbar flex-1 space-y-2 overflow-y-auto pr-1">
           {messages.map((item) => (
             <div key={item.id} className={item.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-              <SketchCard
-                tone={item.role === 'user' ? 'accent' : 'paper'}
-                accent={item.role === 'user' ? 'sky' : 'amber'}
-                padded
-                className="max-w-[92%] whitespace-pre-wrap text-sm leading-relaxed"
-              >
-                {item.content || (busy ? <ThinkingDots size="sm" /> : '')}
-              </SketchCard>
+              <div className="max-w-[92%] space-y-1.5">
+                <SketchCard
+                  tone={item.role === 'user' ? 'accent' : 'paper'}
+                  accent={item.role === 'user' ? 'sky' : 'amber'}
+                  padded
+                  className="whitespace-pre-wrap text-sm leading-relaxed"
+                >
+                  {item.content || (busy ? <ThinkingDots size="sm" /> : '')}
+                </SketchCard>
+                {item.card ? (
+                  <CardView card={item.card} onAction={(action) => void handleCardAction(action)} />
+                ) : null}
+              </div>
             </div>
           ))}
         </div>
@@ -580,6 +706,8 @@ export function App(): JSX.Element {
           <RemindersPanel onClose={() => setView('chat')} />
         ) : view === 'watch' ? (
           <WatchPanel onClose={() => setView('chat')} />
+        ) : view === 'plugins' ? (
+          <PluginsPanel onClose={() => setView('chat')} />
         ) : view === 'apps' ? (
           <AppsPanel onClose={() => setView('chat')} />
         ) : (

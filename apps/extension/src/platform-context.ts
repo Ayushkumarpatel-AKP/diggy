@@ -20,6 +20,7 @@ import {
   type MethodResults,
   type Profile,
   type Reminder,
+  type RichCard,
 } from '@diggy/shared';
 import {
   callContent,
@@ -111,17 +112,63 @@ function normalizeSearch(payload: unknown): MethodResults['searchWeb'] {
   });
 }
 
+/** Keyless favicon lookup — gives every link card its real site logo. */
+function faviconFor(url: string): string | undefined {
+  try {
+    const host = new URL(url).hostname;
+    if (!host) return undefined;
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
+  } catch {
+    return undefined;
+  }
+}
+
+function newCardId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** A link preview card with the page's real logo. */
+function linkCard(title: string, url: string, subtitle?: string): RichCard {
+  return {
+    id: newCardId('link'),
+    kind: 'link',
+    title: title || url,
+    subtitle,
+    url,
+    faviconUrl: faviconFor(url),
+    actions: [{ id: 'open', label: 'Open', kind: 'link', value: url, variant: 'primary' }],
+  };
+}
+
 export class PlatformToolContext implements ToolContext {
   private readonly options: PlatformContextOptions;
+  private cards: RichCard[] = [];
 
   constructor(options: PlatformContextOptions = {}) {
     this.options = options;
   }
 
+  /**
+   * Cards collected while the model worked — the panel renders them under the
+   * reply so the user can *see* what happened (a link, a video, a snapshot).
+   */
+  pushCard(card: RichCard): void {
+    this.cards.push(card);
+  }
+
+  /** Returns and clears the cards collected since the last call. */
+  takeCards(): RichCard[] {
+    const collected = this.cards;
+    this.cards = [];
+    return collected;
+  }
+
   readPage = async (params: MethodParams['readPage']): Promise<MethodResults['readPage']> => {
     // A URL means "fetch it yourself" — never ask the user to open a tab.
     if (params.url && params.url.trim()) {
-      const page = await extractRemote(params.url.trim());
+      const target = params.url.trim();
+      const page = await extractRemote(target);
+      this.pushCard(linkCard(page.title, page.url, 'Page read by Diggy'));
       return { url: page.url, title: page.title, text: page.text };
     }
     return callContent('readPage', { includeFields: params.includeFields ?? true });
@@ -196,8 +243,13 @@ export class PlatformToolContext implements ToolContext {
     }
   };
 
-  searchWeb = async (params: MethodParams['searchWeb']): Promise<MethodResults['searchWeb']> =>
-    searchRemote(params.query);
+  searchWeb = async (params: MethodParams['searchWeb']): Promise<MethodResults['searchWeb']> => {
+    const results = await searchRemote(params.query);
+    for (const result of results.slice(0, 3)) {
+      if (result.url) this.pushCard(linkCard(result.title, result.url, result.snippet));
+    }
+    return results;
+  };
 
   readInbox = async (params: MethodParams['readInbox']): Promise<MethodResults['readInbox']> =>
     readInboxSmart({ query: params.query, max: params.max });

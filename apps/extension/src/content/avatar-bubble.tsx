@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { VrmAvatar } from '@diggy/avatar';
 import type { VrmAvatarHandle } from '@diggy/avatar';
-import type { AvatarMood, AvatarState, FillInstruction } from '@diggy/shared';
+import type { AvatarMood, AvatarState, FillInstruction, RichCard } from '@diggy/shared';
 import { isAgentDelta, isAgentDone, isAgentHeard, isFillPlan, recStart, recStop } from '../../src/messages';
 
 export type BubbleSide = 'left' | 'right';
@@ -128,6 +128,7 @@ export function AvatarBubble({
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [text, setText] = useState('');
+  const [card, setCard] = useState<RichCard | undefined>(undefined);
   const [plan, setPlan] = useState<FillInstruction[] | null>(null);
 
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -236,8 +237,9 @@ export function AvatarBubble({
     hideTimerRef.current = window.setTimeout(() => {
       setPhase('idle');
       setText('');
+      setCard(undefined);
       setState('idle');
-    }, 11000);
+    }, 16000);
   }, []);
 
   /* --- background brain messages ------------------------------------- */
@@ -262,6 +264,7 @@ export function AvatarBubble({
         const answer = raw.text?.trim() || '…';
         setPhase('reply');
         setText(answer);
+        setCard(raw.card);
         if (raw.spoke !== true) speak(answer);
         else setState('talk');
         scheduleHide();
@@ -287,6 +290,7 @@ export function AvatarBubble({
     if (hideTimerRef.current) window.clearTimeout(hideTimerRef.current);
     setPlan(null);
     setHeard('');
+    setCard(undefined);
     setPhase('listening');
     setText('');
     setState('listen');
@@ -440,6 +444,38 @@ export function AvatarBubble({
               {phase !== 'confirm' && shown ? (
                 <span className="diggy-bubble__say-body">{shown}</span>
               ) : null}
+              {phase !== 'confirm' && card ? (
+                <a
+                  className="diggy-bubble__card"
+                  href={card.url ?? '#'}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (card.url) window.open(card.url, '_blank', 'noopener');
+                  }}
+                >
+                  {card.image?.url || card.image?.dataUrl ? (
+                    <span className="diggy-bubble__card-media">
+                      <img src={card.image.url ?? card.image.dataUrl} alt="" loading="lazy" />
+                      {card.kind === 'video' ? (
+                        <span className="diggy-bubble__card-play" aria-hidden="true">
+                          ▶
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  <span className="diggy-bubble__card-title">
+                    {card.faviconUrl ? (
+                      <img className="diggy-bubble__card-favicon" src={card.faviconUrl} alt="" />
+                    ) : null}
+                    {card.title}
+                  </span>
+                  {card.subtitle ? (
+                    <span className="diggy-bubble__card-sub">{card.subtitle}</span>
+                  ) : null}
+                </a>
+              ) : null}
               {phase === 'listening' && !shown ? (
                 <span className="diggy-bubble__say-body diggy-bubble__say-muted">
                   Hold {shortcut} and speak, then release.
@@ -556,6 +592,47 @@ export const BUBBLE_STYLES = `
   line-height: 1.35;
   animation: diggy-say-in 180ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
+.diggy-bubble__card {
+  display: flex;
+  flex-direction: column;
+  margin-top: 3px;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  background: #fff;
+  border: 2px solid var(--diggy-ink);
+  border-radius: 10px;
+}
+.diggy-bubble__card-media {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  background: #f0ece4;
+}
+.diggy-bubble__card-media img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.diggy-bubble__card-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 24px;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.75);
+}
+.diggy-bubble__card-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  max-height: 46px;
+  overflow: hidden;
+}
+.diggy-bubble__card-favicon { flex: none; width: 14px; height: 14px; border-radius: 3px; }
+.diggy-bubble__card-sub { padding: 0 7px 6px; font-size: 11px; opacity: 0.7; }
 .diggy-bubble__say-head { font-weight: 700; opacity: 0.85; font-size: 12px; }
 .diggy-bubble__say-row { display: inline-flex; align-items: center; gap: 5px; }
 .diggy-bubble__say-body { white-space: pre-wrap; }

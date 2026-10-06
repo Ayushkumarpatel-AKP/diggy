@@ -14,6 +14,7 @@ import type {
   FillInstruction,
   PageContext,
   Reminder,
+  RichCard,
 } from '@diggy/shared';
 
 /* ------------------------------------------------------------------ *
@@ -173,6 +174,8 @@ export interface AgentDoneMessage {
   ok: boolean;
   /** True when the model already spoke (so the host must not speak again). */
   spoke?: boolean;
+  /** Optional rich card (video, link, snapshot) to show with the reply. */
+  card?: RichCard;
 }
 
 /** Background → content script: a fill plan awaiting confirmation. */

@@ -154,6 +154,8 @@ export interface ChatMessage {
   content: string;
   createdAt: string;
   toolName?: ToolName;
+  /** Optional rich card (link preview, video, page snapshot, …). */
+  card?: import('./cards.js').RichCard;
 }
 
 export interface FieldDescriptor {

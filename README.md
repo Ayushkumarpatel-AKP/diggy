@@ -25,6 +25,8 @@ your Gmail, and reminds you before deadlines hit.
 | 🧍 | **Animated VRM avatar** — walks in from the corner, idles (breathing/blink/sway), emotes, lip-syncs, walks out. |
 | 🎙 | **Push-to-talk voice** — hold `Ctrl+Shift+Space`, speak, release. Transcribed by **Groq Whisper** (works in Chrome *and* Edge). |
 | 💬 | **Tool-calling brain** — reads pages, searches the web, crawls, fills forms, sets reminders, reads Gmail/Calendar. |
+| 🃏 | **Rich cards** — link previews with the site's real logo, **YouTube video cards** (thumbnail + ▶ Play), and **page snapshots** after a fill. |
+| 🧩 | **One-click plugins** — sign in once, then **Connect Notion / Gmail / Calendar / GitHub** with a single click. No URLs, no keys. |
 | 🔁 | **Automatic provider failover** — if Groq hits its limit it instantly switches to NVIDIA, and back. |
 | 🖊️ | **Generic form autofill** — detects fields on *any* website and maps them to your profile (never auto-submits). |
 | 🔐 | **Encrypted vault** — your profile is AES-256-GCM (Argon2id KDF) and never leaves the browser. |
@@ -74,6 +76,7 @@ diggy/
 │  └─ demo/                 tiny Vite playground for the avatar engine
 └─ services/
    ├─ crawler/              Fastify research service: extract / crawl / search / markdown
+   ├─ api/                  one-click plugin backend: Google sign-in, OAuth, encrypted tokens
    └─ bridge/               Node WebSocket bridge the desktop + extension talk over
 ```
 
@@ -102,6 +105,15 @@ pnpm test             # vault, core, crawler and bridge test suites
 ```bash
 pnpm --filter @diggy/crawler start        # http://127.0.0.1:17322
 ```
+
+**One-click plugins backend:**
+```bash
+pnpm --filter @diggy/api start            # http://127.0.0.1:17323
+```
+Side panel → **🧩 Plugins** → *Sign in with Google* → then **Connect Notion / GitHub / Gmail**.
+The server holds the OAuth apps and keeps refresh tokens **encrypted**; the extension never sees them.
+Register the OAuth apps once (redirect URI `http://127.0.0.1:17323/oauth/<provider>/callback`) — see
+[`RUN.md` §7](RUN.md).
 
 **Desktop companion (needs Rust):**
 ```bash

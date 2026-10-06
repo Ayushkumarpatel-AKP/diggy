@@ -7,6 +7,7 @@
  * is not running.
  */
 import {
+  API_DEFAULT_URL,
   BRIDGE_DEFAULT_URL,
   BRIDGE_PROTOCOL_VERSION,
   CRAWLER_DEFAULT_URL,
@@ -29,6 +30,8 @@ export interface Settings {
   bridgeToken: string;
   /** Crawler service base URL. */
   crawlerUrl: string;
+  /** One-click plugins backend base URL. */
+  apiUrl: string;
   /** Speak assistant replies aloud when possible. */
   voiceEnabled: boolean;
   /** Show the floating in-page avatar bubble by default. */
@@ -73,6 +76,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bridgeUrl: BRIDGE_DEFAULT_URL,
   bridgeToken: '',
   crawlerUrl: CRAWLER_DEFAULT_URL,
+  apiUrl: API_DEFAULT_URL,
   voiceEnabled: true,
   avatarVisible: true,
   shortcut: 'Ctrl+Shift+Space',

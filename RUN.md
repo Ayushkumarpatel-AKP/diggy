@@ -9,10 +9,24 @@
 
 ### Tabs in the side panel
 - **Chat** — typed chat + `Scan page`, `Fill form`, `My profile`. ⚙ opens settings.
+  Answers can include **rich cards**: a link preview with the site's real logo, a **YouTube video
+  card** (thumbnail + ▶ Play + Open), or a **page snapshot** after a form fill.
 - **Profile** — create/unlock your **encrypted** vault (AES-256-GCM + Argon2id, local only).
   Once unlocked, the decrypted profile (secrets stripped) feeds the `getProfile` tool.
 - **Reminders** — create/list/snooze/complete deadlines; alarms fire even when the panel is closed.
+- **Watch** — monitor up to 10 pages for changes/keywords.
+- **Plugins** — **one-click** connections (Gmail, Calendar, Notion, GitHub) via the local backend.
+  Sign in once with Google; no URLs or keys to copy. See section 7.
+- **Apps** — the zero-setup Gmail/Calendar path (no backend needed).
 - **Page** — what's running on the web right now: active tab, page scan, service status.
+
+### Rich cards & snapshots (what makes Diggy verifiable)
+- Ask *"MrBeast ka latest video play karo"* → Diggy resolves the channel's public RSS feed and shows
+  the **latest video as a card** (thumbnail, title, ▶ Play, Open on YouTube) — in the side panel
+  **and** in the in-page bubble (hold the shortcut and say it).
+- Ask it to research something → it answers with **link cards** (favicon + title + snippet).
+- Ask it to fill a form → after filling, it captures the **visible page with the fields filled** and
+  shows it as a **snapshot card** ("Nothing was submitted — check it, then submit yourself").
 
 ### Voice (push-to-talk)
 **First time: open the side panel and click the 🎙 button once** (grants microphone access to the
@@ -92,6 +106,44 @@ OAuth takes priority when connected; otherwise the zero-setup session/ICS source
 
 Either way, the bot gains `readInbox` / `readCalendar`, so you can just ask
 “koi job wala email aaya kya?” or “kal kya hai mere schedule me?”.
+
+## 7. One-click plugins backend (`@diggy/api`)
+
+This is what makes **“Connect Notion”, “Connect Gmail”, “Connect GitHub”** a *single click* — the
+server owns the OAuth apps and keeps refresh tokens **encrypted** (never in the extension).
+
+```bash
+pnpm --filter @diggy/api start        # http://127.0.0.1:17323  (loopback only)
+```
+
+1. Side panel → **🧩 Plugins** → **Sign in with Google** (a tab opens; finish there, come back).
+2. The gallery lists plugins. Click **Connect** on Notion / GitHub / Google — one click, no URLs.
+   A tab opens, you approve, the tab closes itself, and the row flips to **Connected ✓**.
+
+### Configure the OAuth apps (one-time, developer side)
+Set these before starting the server (only the providers you want). Redirect URI for every provider
+is `${PUBLIC_URL}/oauth/<provider>/callback` — i.e. `http://127.0.0.1:17323/oauth/notion/callback`.
+
+| Provider | Where to register | Notes |
+|---|---|---|
+| `google` | Google Cloud → OAuth client (Web) | sign-in + Gmail + Calendar in one consent |
+| `notion` | notion.so/my-integrations → Public integration | needs a client secret → why the backend exists |
+| `github` | GitHub → Settings → Developer settings → OAuth Apps | `read:user repo` |
+| `youtube` | *nothing* | public RSS only, `auth: none` |
+
+```bash
+GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=...
+NOTION_CLIENT_ID=... NOTION_CLIENT_SECRET=...
+GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=...
+DIGGY_TOKEN_KEY=<64 hex chars>   # optional: otherwise generated + persisted in the DB
+```
+
+Endpoints: `/health`, `/auth/*` (pairing sign-in), `/plugins`, `/oauth/:provider/start|callback`,
+`/actions/:provider/:action` (e.g. `notion.search`, `github.listRepos`, `google.gmail.list`,
+`youtube.latest`), `/favicon`, `/meta`, `/youtube/latest`.
+
+> Without `GOOGLE_CLIENT_ID` the sign-in endpoint returns a clear `not_configured` error instead of
+> crashing — the rest of the app keeps working, and **Apps** (zero-setup Gmail/Calendar) still works.
 
 ## Verified end-to-end (this build)
 - Extension: bot renders in the page corner, **push-to-talk** → background brain → bubble +

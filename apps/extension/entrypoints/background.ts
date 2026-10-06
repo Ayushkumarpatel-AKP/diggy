@@ -35,6 +35,7 @@ import { getWatches, updateWatch } from '../src/watches';
 import { checkWatch } from '../src/web';
 import { addSeenIds, getSeenIds } from '../src/google';
 import { readCalendarSmart, readInboxSmart } from '../src/accounts';
+import { latestVideos, parseVideoRequest, videoCard } from '../src/cards';
 
 const ALARM_TICK = 'diggy:reminder-tick';
 const ALARM_PREFIX = 'diggy:reminder:';
@@ -207,6 +208,34 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
   };
 
   send({ type: 'diggy:agent-delta', text: '' });
+
+  // "…ka latest video" → resolve it here so the bubble can show a video card
+  // (thumbnail + Play) instead of a bare sentence.
+  const channel = parseVideoRequest(message.text);
+  if (channel) {
+    try {
+      const video = (await latestVideos(channel, 1))[0];
+      if (video) {
+        send({
+          type: 'diggy:agent-done',
+          text: `Ye raha ${channel} ka latest video 👇`,
+          ok: true,
+          card: videoCard({
+            videoId: video.videoId,
+            title: video.title,
+            url: video.url,
+            thumbnail: video.thumbnail,
+            published: video.published,
+            channel,
+          }),
+        });
+        return;
+      }
+    } catch {
+      /* fall through to the normal brain */
+    }
+  }
+
   const result = await askDiggy(message.text, {
     tabId,
     onDelta: (_chunk, full) => send({ type: 'diggy:agent-delta', text: full }),
