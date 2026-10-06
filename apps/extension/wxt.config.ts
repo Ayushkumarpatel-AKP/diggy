@@ -36,7 +36,7 @@ export default defineConfig({
     // Commands have no key-up → it toggles (press to start, press again to send).
     commands: {
       'toggle-voice': {
-        suggested_key: { default: 'Ctrl+Shift+Space' },
+        suggested_key: { default: 'Ctrl+Space' },
         description: 'Talk to Diggy (press to start, press again to send)',
       },
     },

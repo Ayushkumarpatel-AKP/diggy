@@ -79,7 +79,7 @@ export const DEFAULT_SETTINGS: Settings = {
   apiUrl: API_DEFAULT_URL,
   voiceEnabled: true,
   avatarVisible: true,
-  shortcut: 'Ctrl+Shift+Space',
+  shortcut: 'Ctrl+Space',
   googleClientId: ENV.VITE_GOOGLE_CLIENT_ID ?? '',
   gmailSession: false,
   gmailAccount: 0,
@@ -122,8 +122,16 @@ async function writeValue<T>(key: string, value: T): Promise<void> {
  * Settings
  * ------------------------------------------------------------------ */
 
+/**
+ * Shortcuts we used to ship. A stored value that still equals an old default
+ * means the user never picked one — so it follows the current default instead
+ * of pinning them to a chord we no longer recommend.
+ */
+const LEGACY_SHORTCUTS = ['Ctrl+Shift+Space'];
+
 export async function getSettings(): Promise<Settings> {
   const stored = await readValue<Partial<Settings>>(STORAGE_KEYS.settings, {});
+  if (stored.shortcut && LEGACY_SHORTCUTS.includes(stored.shortcut)) delete stored.shortcut;
   return { ...DEFAULT_SETTINGS, ...stored };
 }
 

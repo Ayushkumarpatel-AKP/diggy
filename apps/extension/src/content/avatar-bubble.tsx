@@ -107,7 +107,7 @@ export function AvatarBubble({
   const [plan, setPlan] = useState<FillInstruction[] | null>(null);
 
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [shortcut, setShortcut] = useState('Ctrl+Shift+Space');
+  const [shortcut, setShortcut] = useState('Ctrl+Space');
   const [holding, setHolding] = useState(false);
   const [heard, setHeard] = useState('');
 

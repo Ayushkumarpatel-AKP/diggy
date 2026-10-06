@@ -313,7 +313,7 @@ export function App(): JSX.Element {
         setMicReady(true);
         push(
           'assistant',
-          `🎙 Microphone ready — hold ${settings?.shortcut || 'Ctrl+Shift+Space'} on any page (or right here in the panel), speak, then release.`,
+          `🎙 Microphone ready — hold ${settings?.shortcut || 'Ctrl+Space'} on any page (or right here in the panel), speak, then release.`,
         );
       } else {
         setMicReady(false);
@@ -329,7 +329,7 @@ export function App(): JSX.Element {
   const voiceHoldingRef = useRef(false);
 
   useEffect(() => {
-    const spec = settings?.shortcut?.trim() || 'Ctrl+Shift+Space';
+    const spec = settings?.shortcut?.trim() || 'Ctrl+Space';
 
     const begin = async (): Promise<void> => {
       if (voiceHoldingRef.current) return;
@@ -604,7 +604,7 @@ export function App(): JSX.Element {
             />
             <SketchInput
               label="Push-to-talk shortcut"
-              placeholder="Ctrl+Shift+Space"
+              placeholder="Ctrl+Space"
               value={settings.shortcut}
               onChange={(event) => void updateSetting({ shortcut: event.target.value })}
             />
