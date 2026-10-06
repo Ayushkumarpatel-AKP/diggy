@@ -227,7 +227,9 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
   send({ type: 'diggy:agent-delta', text: '' });
 
   // "…ka latest video" → resolve it here so the bubble can show a video card
-  // (thumbnail + Play) instead of a bare sentence.
+  // (thumbnail + Play) instead of a bare sentence. If that fails we do NOT give
+  // up: the brain has searchWeb/readPage, so hand it a hint and let it search.
+  let hint = '';
   const channel = parseVideoRequest(message.text);
   if (channel) {
     try {
@@ -248,21 +250,13 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
         });
         return;
       }
-      // Say so plainly instead of falling through to a brain that has no
-      // YouTube tool (which used to produce an empty "no answer" reply).
-      send({
-        type: 'diggy:agent-done',
-        text: `“${channel}” naam ka channel nahi mila. Poora naam bolo — jaise “MrBeast ka latest video”.`,
-        ok: false,
-        spoke: true,
-      });
-      return;
     } catch {
-      /* fall through to the normal brain */
+      /* leave it to the brain */
     }
+    hint = `\n\n(System note: the user wants ${channel}'s latest YouTube video. Use searchWeb to find the watch link, then answer with it.)`;
   }
 
-  const result = await askDiggy(message.text, {
+  const result = await askDiggy(`${message.text}${hint}`, {
     tabId,
     onDelta: (_chunk, full) => send({ type: 'diggy:agent-delta', text: full }),
   });

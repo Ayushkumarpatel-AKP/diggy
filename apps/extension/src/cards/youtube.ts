@@ -4,10 +4,13 @@
  * `parseYouTubeFeed` is a PURE Atom parser (regex, no DOM) so it can be
  * unit-tested directly. `resolveChannelId` turns a channel id, `@handle`,
  * channel URL or bare name into a `UC…` id by reading the channel page.
- * `latestVideos` combines both: resolve the channel, then read its feed.
+ * `latestVideos` combines both: resolve the channel, then read its feed. If the
+ * channel cannot be resolved at all it falls back to a plain web search, so a
+ * well-known name ("mr beast") still finds its newest video.
  *
  * The network helpers never throw — they return `undefined` / `[]`.
  */
+import { searchRemote } from '../web';
 
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -152,7 +155,7 @@ export function parseChannelVideosPage(html: string, max = 3): YouTubeVideo[] {
   return videos;
 }
 
-async function fetchText(url: string, timeoutMs = 12000): Promise<string | undefined> {
+async function fetchText(url: string, timeoutMs = 20000): Promise<string | undefined> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -230,20 +233,87 @@ export async function resolveChannelId(input: string): Promise<string | undefine
 export async function latestVideos(channelIdOrHandle: string, max = 3): Promise<YouTubeVideo[]> {
   const limit = Math.max(0, max);
   const channelId = await resolveChannelId(channelIdOrHandle);
-  if (!channelId) return [];
+  if (channelId) {
+    const xml = await fetchText(
+      `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`,
+    );
+    if (xml) {
+      const parsed = parseYouTubeFeed(xml);
+      if (parsed.length > 0) return parsed.slice(0, limit);
+    }
 
-  const xml = await fetchText(
-    `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`,
-  );
-  if (xml) {
-    const parsed = parseYouTubeFeed(xml);
-    if (parsed.length > 0) return parsed.slice(0, limit);
+    // The feed is often blocked (404) — the channel page still renders.
+    const html = await fetchText(`https://www.youtube.com/channel/${channelId}/videos`);
+    if (html) {
+      const scraped = parseChannelVideosPage(html, limit);
+      if (scraped.length > 0) return scraped;
+    }
   }
 
-  // The feed is often blocked (404) — the channel page still renders.
-  const html = await fetchText(`https://www.youtube.com/channel/${channelId}/videos`);
-  if (!html) return [];
-  return parseChannelVideosPage(html, limit);
+  // Still nothing? Ask the web — this is what saves well-known-but-messy names.
+  const searched = await searchLatestVideo(channelIdOrHandle);
+  return searched ? [searched] : [];
+}
+
+function videoIdFromUrl(url: string): string | undefined {
+  return (
+    /[?&]v=([A-Za-z0-9_-]{11})/.exec(url)?.[1] ??
+    /youtu\.be\/([A-Za-z0-9_-]{11})/.exec(url)?.[1] ??
+    /\/shorts\/([A-Za-z0-9_-]{11})/.exec(url)?.[1]
+  );
+}
+
+function fromVideoId(videoId: string, title = ''): YouTubeVideo {
+  return {
+    videoId,
+    title: title || videoId,
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    published: '',
+  };
+}
+
+/**
+ * Does a search hit actually look like it belongs to `name`?
+ *
+ * Without this, a made-up name still returns whatever the search engine felt
+ * like showing — worse than admitting we could not find it.
+ */
+function looksRelevant(name: string, haystack: string): boolean {
+  const compact = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const flat = haystack.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (compact.length >= 4 && flat.includes(compact)) return true;
+  const tokens = name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3);
+  return tokens.length > 0 && tokens.every((token) => flat.includes(token));
+}
+
+/**
+ * Last resort: find the newest video through a plain web search.
+ *
+ * Channel resolution fails for plenty of perfectly well-known names — localised
+ * spellings, renamed channels, a request like "mr beast" split by a space. A
+ * normal search for the video almost always returns a watch link.
+ */
+export async function searchLatestVideo(name: string): Promise<YouTubeVideo | undefined> {
+  const clean = (name ?? '').trim();
+  if (!clean) return undefined;
+  for (const query of [`${clean} latest video youtube`, `${clean} new video youtube`]) {
+    try {
+      const hits = await searchRemote(query, 8);
+      for (const hit of hits) {
+        const videoId = videoIdFromUrl(hit.url);
+        if (!videoId) continue;
+        if (!looksRelevant(clean, `${hit.title} ${hit.snippet} ${hit.url}`)) continue;
+        return fromVideoId(videoId, hit.title.replace(/\s*[-–]\s*YouTube\s*$/i, ''));
+      }
+    } catch {
+      /* try the next query */
+    }
+  }
+  return undefined;
 }
 
 const WANT_LATEST = /(latest|newest|recent|last|new|fresh|naya|nayi|nayā|navin|abhi ka)/i;

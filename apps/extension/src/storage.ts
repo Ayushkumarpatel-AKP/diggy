@@ -66,7 +66,8 @@ export interface Todo {
  * These make the bot work out of the box for local/dev builds; they are baked
  * into the bundle, so never ship a build made with keys present.
  */
-const ENV = import.meta.env as unknown as Record<string, string | undefined>;
+const ENV =
+  (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
 
 export const DEFAULT_SETTINGS: Settings = {
   provider: ENV.VITE_DEFAULT_PROVIDER === 'nvidia' ? 'nvidia' : 'groq',

@@ -104,34 +104,46 @@ export async function runResilient(options: ResilientOptions): Promise<Resilient
       continue;
     }
 
-    context = options.makeContext();
-    let full = '';
-    try {
-      const result = runAgent({ messages: options.messages, provider: model, context });
-      for await (const delta of result.textStream) {
-        full += delta;
-        options.onDelta?.(delta, full);
-      }
-      if (!full.trim()) {
-        // The AI SDK ends the stream silently on an error part; surface it.
-        try {
-          full = await result.text;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (isQuotaError(message)) markExhausted(name);
-          lastError = message;
-          switched = true;
-          continue;
+    // A reasoning model occasionally ends a turn with no visible text (all of
+    // it went into reasoning, or a tool round finished silently). One nudge
+    // usually gets a real answer instead of "Model ne kuch jawab nahi diya".
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      context = options.makeContext();
+      let full = '';
+      const messages =
+        attempt === 0
+          ? options.messages
+          : [
+              ...options.messages,
+              { role: 'user' as const, content: 'Reply now with one short sentence.' },
+            ];
+      try {
+        const result = runAgent({ messages, provider: model, context });
+        for await (const delta of result.textStream) {
+          full += delta;
+          options.onDelta?.(delta, full);
         }
+        if (!full.trim()) {
+          // The AI SDK ends the stream silently on an error part; surface it.
+          try {
+            full = await result.text;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (isQuotaError(message)) markExhausted(name);
+            lastError = message;
+            break;
+          }
+        }
+        if (full.trim()) {
+          return { text: full.trim(), provider: name, ok: true, context, switched };
+        }
+        lastError = 'The model returned an empty reply.';
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (isQuotaError(message)) markExhausted(name);
+        lastError = message;
+        break;
       }
-      if (full.trim()) {
-        return { text: full.trim(), provider: name, ok: true, context, switched };
-      }
-      lastError = 'The model returned an empty reply.';
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (isQuotaError(message)) markExhausted(name);
-      lastError = message;
     }
     switched = true;
   }
