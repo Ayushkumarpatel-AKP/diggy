@@ -15,6 +15,7 @@ import { VrmAvatar } from '@diggy/avatar';
 import type { VrmAvatarHandle } from '@diggy/avatar';
 import type { AvatarMood, AvatarState, FillInstruction, RichCard } from '@diggy/shared';
 import { isAgentDelta, isAgentDone, isAgentHeard, isFillPlan, recStart, recStop } from '../../src/messages';
+import { isChordRelease, matchesShortcut } from '../../src/shortcut';
 
 export type BubbleSide = 'left' | 'right';
 
@@ -74,32 +75,6 @@ function getRecognition(): RecognitionCtor | undefined {
   return scope.SpeechRecognition ?? scope.webkitSpeechRecognition;
 }
 
-/** Does this keydown/keyup event match a shortcut spec like "Ctrl+Shift+Space"? */
-function matchesShortcut(event: KeyboardEvent, spec: string): boolean {
-  const parts = spec
-    .toLowerCase()
-    .split('+')
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return false;
-  const main = parts[parts.length - 1];
-  const mainOk = main === 'space' ? event.code === 'Space' : event.key.toLowerCase() === main;
-  return (
-    mainOk &&
-    event.ctrlKey === parts.includes('ctrl') &&
-    event.shiftKey === parts.includes('shift') &&
-    event.altKey === parts.includes('alt')
-  );
-}
-
-function shortcutParts(spec: string): string[] {
-  return spec
-    .toLowerCase()
-    .split('+')
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
 /* ------------------------------------------------------------------ *
  * Component
  * ------------------------------------------------------------------ */
@@ -141,10 +116,8 @@ export function AvatarBubble({
   const transcriptRef = useRef('');
   const hideTimerRef = useRef<number | null>(null);
   const voiceRef = useRef(true);
-  const shortcutRef = useRef(shortcut);
 
   voiceRef.current = voiceEnabled;
-  shortcutRef.current = shortcut;
 
   /* --- settings ------------------------------------------------------- */
 
@@ -294,17 +267,25 @@ export function AvatarBubble({
     setPhase('listening');
     setText('');
     setState('listen');
-    // The background owns the mic (offscreen recorder) + Whisper transcription.
-    const result = await recStart();
-    // eslint-disable-next-line no-console
-    console.warn('[Diggy] voice start:', result);
-    if (!result?.ok) {
-      holdingRef.current = false;
-      setPhase('reply');
-      setText(result?.error ?? 'Microphone unavailable — check mic permission and try again.');
-      scheduleHide();
-    } else {
+    try {
+      // The background owns the mic (offscreen recorder) + Whisper transcription.
+      const result = await recStart();
+      if (!result?.ok) {
+        holdingRef.current = false;
+        setHolding(false);
+        setPhase('reply');
+        setText(result?.error ?? 'Microphone unavailable — open the side panel and click 🎙 once.');
+        scheduleHide();
+        return;
+      }
       setHolding(true);
+    } catch (error) {
+      // A rejected message must never leave the shortcut wedged on.
+      holdingRef.current = false;
+      setHolding(false);
+      setPhase('reply');
+      setText(`Voice failed: ${error instanceof Error ? error.message : String(error)}`);
+      scheduleHide();
     }
   }, [scheduleHide]);
 
@@ -314,12 +295,16 @@ export function AvatarBubble({
     setHolding(false);
     setPhase('thinking');
     setState('think');
-    const result = await recStop();
-    // eslint-disable-next-line no-console
-    console.warn('[Diggy] voice stop:', result);
-    if (!result?.ok) {
+    try {
+      const result = await recStop();
+      if (!result?.ok) {
+        setPhase('reply');
+        setText(result?.error ?? 'I could not hear anything — try again.');
+        scheduleHide();
+      }
+    } catch (error) {
       setPhase('reply');
-      setText(result?.error ?? 'I could not hear anything — try again.');
+      setText(`Voice failed: ${error instanceof Error ? error.message : String(error)}`);
       scheduleHide();
     }
     // On success the background transcribes, runs the agent and streams the reply
@@ -328,35 +313,17 @@ export function AvatarBubble({
 
   useEffect(() => {
     if (!visible) return undefined;
-    const parts = shortcutParts(shortcut);
 
     const onKeyDown = (event: KeyboardEvent): void => {
-      // Diagnostic: tell us what the page actually receives for Ctrl/Alt chords.
-      if ((event.ctrlKey || event.altKey) && !event.repeat) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          '[Diggy] key seen:',
-          JSON.stringify({ key: event.key, code: event.code, ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey }),
-          'want:',
-          shortcutRef.current,
-        );
-      }
       if (event.repeat) return;
       if (!matchesShortcut(event, shortcut)) return;
       event.preventDefault();
       event.stopPropagation();
-      startListening();
+      void startListening();
     };
     const onKeyUp = (event: KeyboardEvent): void => {
       if (!holdingRef.current) return;
-      const key = event.key.toLowerCase();
-      const isChordKey =
-        (parts.includes('ctrl') && key === 'control') ||
-        (parts.includes('shift') && key === 'shift') ||
-        (parts.includes('alt') && key === 'alt') ||
-        key === parts[parts.length - 1] ||
-        (parts[parts.length - 1] === 'space' && event.code === 'Space');
-      if (isChordKey) finishListening();
+      if (isChordRelease(event, shortcut)) void finishListening();
     };
 
     window.addEventListener('keydown', onKeyDown, true);

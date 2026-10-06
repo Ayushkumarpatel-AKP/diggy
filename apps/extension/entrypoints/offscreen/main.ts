@@ -85,12 +85,19 @@ function stopRecording(): Promise<{ ok: boolean; base64?: string; mime?: string;
   });
 }
 
+/**
+ * Internal message names. The background is the only thing that talks to this
+ * document — the content script's `diggy:rec-start` must NOT reach us directly,
+ * or the recorder races the background's document creation.
+ */
 browser.runtime.onMessage.addListener((raw: unknown) => {
   const message = raw as { type?: string } | undefined;
   if (!message) return undefined;
-  if (message.type === 'diggy:rec-start') return startRecording();
-  if (message.type === 'diggy:rec-stop') return stopRecording();
-  if (message.type === 'diggy:rec-warm') {
+  // Readiness probe: the background waits for this before sending any work.
+  if (message.type === 'diggy:offscreen-ping') return Promise.resolve({ ok: true });
+  if (message.type === 'diggy:offscreen-start') return startRecording();
+  if (message.type === 'diggy:offscreen-stop') return stopRecording();
+  if (message.type === 'diggy:offscreen-warm') {
     // Pre-warm the mic so the first push-to-talk is instant.
     return startRecording().then((result) => {
       if (result.ok) {

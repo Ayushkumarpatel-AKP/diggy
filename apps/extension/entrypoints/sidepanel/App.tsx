@@ -10,7 +10,8 @@ import {
   ThinkingDots,
 } from '@diggy/ui';
 import type { AvatarMood, CardAction, ChatMessage, Profile, RichCard } from '@diggy/shared';
-import { callContent, getBridgeStatus, type BridgeEventMessage } from '../../src/messages';
+import { callContent, getBridgeStatus, recStart, recStop, recWarm, type BridgeEventMessage } from '../../src/messages';
+import { isChordRelease, matchesShortcut } from '../../src/shortcut';
 import {
   applyFillPlan,
   PlatformToolContext,
@@ -303,18 +304,78 @@ export function App(): JSX.Element {
       return;
     }
     try {
-      // Grant the mic for the whole extension (the offscreen recorder reuses it).
+      // 1. Grant the mic for the whole extension (the offscreen recorder reuses it).
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
       setMicReady(true);
+      // 2. Warm the offscreen recorder so the first push-to-talk is instant.
+      const warm = await recWarm().catch(() => ({ ok: false }) as { ok?: boolean; error?: string });
+      if (warm?.ok === false && 'error' in warm && warm.error) {
+        push('assistant', `🎙 Permission granted, but the recorder said: ${warm.error}`);
+        return;
+      }
       push(
         'assistant',
-        '🎙 Microphone ready — hold Ctrl+Shift+Space on any page, speak, then release.',
+        `🎙 Microphone ready — hold ${settings?.shortcut || 'Ctrl+Shift+Space'} on any page (or right here in the panel), speak, then release.`,
       );
     } catch {
       push('assistant', 'Microphone permission was denied. Allow it for this extension and retry.');
     }
-  }, [push]);
+  }, [push, settings?.shortcut]);
+
+  /* --- push-to-talk (also works while the panel has focus) -------------- */
+
+  const voiceHoldingRef = useRef(false);
+
+  useEffect(() => {
+    const spec = settings?.shortcut?.trim() || 'Ctrl+Shift+Space';
+
+    const begin = async (): Promise<void> => {
+      if (voiceHoldingRef.current) return;
+      voiceHoldingRef.current = true;
+      setListening(true);
+      try {
+        const result = await recStart();
+        if (!result?.ok) {
+          voiceHoldingRef.current = false;
+          setListening(false);
+          push('assistant', result?.error ?? 'Microphone unavailable — click 🎙 once to allow it.');
+        }
+      } catch (error) {
+        voiceHoldingRef.current = false;
+        setListening(false);
+        push('assistant', `Voice failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+
+    const end = async (): Promise<void> => {
+      if (!voiceHoldingRef.current) return;
+      voiceHoldingRef.current = false;
+      setListening(false);
+      try {
+        const result = await recStop();
+        if (!result?.ok) push('assistant', 'I could not hear anything — try again.');
+      } catch {
+        push('assistant', 'Voice failed — try again.');
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.repeat || !matchesShortcut(event, spec)) return;
+      event.preventDefault();
+      void begin();
+    };
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (voiceHoldingRef.current && isChordRelease(event, spec)) void end();
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+    };
+  }, [settings?.shortcut, push]);
 
   /* --- quick actions ---------------------------------------------------- */
 
@@ -459,6 +520,11 @@ export function App(): JSX.Element {
             <SketchBadge accent="sky" size="sm">
               {brainProvider || settings?.provider || 'groq'}
             </SketchBadge>
+            {listening ? (
+              <SketchBadge accent="pink" size="sm" dot>
+                🎙 listening
+              </SketchBadge>
+            ) : null}
           </div>
           <SketchButton
             size="sm"

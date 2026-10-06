@@ -134,6 +134,11 @@ export interface RecStopMessage {
   type: 'diggy:rec-stop';
 }
 
+/** Push-to-talk: pre-warm the offscreen recorder so the first press is instant. */
+export interface RecWarmMessage {
+  type: 'diggy:rec-warm';
+}
+
 /** Background → everyone: a `BridgeEvent` arrived from the desktop companion. */
 export interface BridgeEventMessage {
   type: 'diggy:bridge-event';
@@ -203,6 +208,7 @@ export type ExtMessage =
   | GoogleCheckMessage
   | RecStartMessage
   | RecStopMessage
+  | RecWarmMessage
   | AgentHeardMessage
   | BridgeEventMessage
   | ScheduleReminderMessage
@@ -275,6 +281,10 @@ export function isRecStart(message: unknown): message is RecStartMessage {
 
 export function isRecStop(message: unknown): message is RecStopMessage {
   return isObject(message) && message.type === 'diggy:rec-stop';
+}
+
+export function isRecWarm(message: unknown): message is RecWarmMessage {
+  return isObject(message) && message.type === 'diggy:rec-warm';
 }
 
 export function isAgentHeard(message: unknown): message is AgentHeardMessage {

@@ -18,6 +18,7 @@ import {
   isGoogleCheck,
   isRecStart,
   isRecStop,
+  isRecWarm,
   isWatchCheck,
   type AgentAskMessage,
   type BridgeEventMessage,
@@ -132,17 +133,28 @@ function handleMessage(
     return checkGoogle().then((result) => ({ ok: true, ...result }));
   }
   if (isRecStart(message)) {
-    return ensureOffscreen().then(async (ready) => {
-      if (!ready) return { ok: false, error: 'Recording is unavailable in this browser.' };
-      return browser.runtime
-        .sendMessage({ type: 'diggy:rec-start' })
-        .catch(() => ({ ok: false, error: 'Microphone unavailable — allow mic access.' }));
-    });
+    return (async () => {
+      if (!(await ensureOffscreen())) {
+        return { ok: false, error: 'Recording is unavailable in this browser.' };
+      }
+      try {
+        const started = (await browser.runtime.sendMessage({ type: 'diggy:offscreen-start' })) as
+          | { ok?: boolean; error?: string }
+          | undefined;
+        if (started?.ok) return { ok: true };
+        return {
+          ok: false,
+          error: started?.error ?? 'Microphone unavailable — click 🎙 in the side panel once to allow it.',
+        };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'Microphone unavailable.' };
+      }
+    })();
   }
   if (isRecStop(message)) {
     return (async () => {
       const recorded = (await browser.runtime
-        .sendMessage({ type: 'diggy:rec-stop' })
+        .sendMessage({ type: 'diggy:offscreen-stop' })
         .catch(() => ({ ok: false, error: 'Microphone unavailable.' }))) as
         | { ok?: boolean; base64?: string; mime?: string; error?: string }
         | undefined;
@@ -162,6 +174,21 @@ function handleMessage(
         return { ok: true, text };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    })();
+  }
+  if (isRecWarm(message)) {
+    return (async () => {
+      if (!(await ensureOffscreen())) {
+        return { ok: false, error: 'Recording is unavailable in this browser.' };
+      }
+      try {
+        const warmed = (await browser.runtime.sendMessage({ type: 'diggy:offscreen-warm' })) as
+          | { ok?: boolean; error?: string }
+          | undefined;
+        return warmed ?? { ok: false, error: 'No response from the recorder.' };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'Microphone unavailable.' };
       }
     })();
   }
@@ -283,13 +310,38 @@ interface OffscreenApi {
 
 let offscreenReady = false;
 
+/**
+ * Wait until the offscreen document's message listener is actually up.
+ *
+ * `createDocument()` resolves before the document's script has registered its
+ * listener, so sending work immediately fails with "receiving end does not
+ * exist" — the reason the first push-to-talk used to do nothing.
+ */
+async function offscreenPing(timeoutMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const pong = (await browser.runtime.sendMessage({ type: 'diggy:offscreen-ping' })) as
+        | { ok?: boolean }
+        | undefined;
+      if (pong?.ok) return true;
+    } catch {
+      /* not listening yet */
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+}
+
 async function ensureOffscreen(): Promise<boolean> {
   const api = (browser as unknown as { offscreen?: OffscreenApi }).offscreen;
   if (!api) return false;
   try {
     if (api.hasDocument && (await api.hasDocument())) {
-      offscreenReady = true;
-      return true;
+      if (await offscreenPing(1200)) {
+        offscreenReady = true;
+        return true;
+      }
     }
   } catch {
     /* older browsers */
@@ -301,11 +353,12 @@ async function ensureOffscreen(): Promise<boolean> {
       reasons: ['USER_MEDIA'],
       justification: 'Record your voice command so Diggy can transcribe it locally.',
     });
-    offscreenReady = true;
-    return true;
   } catch {
     return false;
   }
+  if (!(await offscreenPing())) return false;
+  offscreenReady = true;
+  return true;
 }
 
 /** Send the recorded audio to Groq Whisper and return the transcript. */
