@@ -53,7 +53,7 @@ import {
   type StepInput,
   type StepResult,
   type SummarizeModel,
-} from '../../../packages/agent/src/index';
+} from '@diggy/agent';
 import { makeId, type AgentActivityMessage, type AgentActivityView, type ContentMethod, type ContentMethodParams } from './messages';
 import { runResilient, providerChain } from './brain';
 import {

@@ -57,6 +57,9 @@ importers:
 
   apps/extension:
     dependencies:
+      '@diggy/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@diggy/avatar':
         specifier: workspace:*
         version: link:../../packages/avatar
@@ -100,6 +103,21 @@ importers:
       wxt:
         specifier: ^0.19.0
         version: 0.19.29(@types/node@22.20.5)(rollup@4.64.0)
+
+  packages/agent:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.20.5
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)
 
   packages/avatar:
     dependencies:
@@ -146,6 +164,46 @@ importers:
       zod:
         specifier: ^3.23.8
         version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.20.5
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)
+
+  packages/page-agent:
+    dependencies:
+      '@diggy/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@diggy/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.1
+        version: 22.20.5
+      jsdom:
+        specifier: ^25.0.1
+        version: 25.0.1
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)
+
+  packages/policy:
     devDependencies:
       '@types/node':
         specifier: ^22.10.1

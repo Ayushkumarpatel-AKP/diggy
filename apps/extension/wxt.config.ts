@@ -12,6 +12,8 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
 
+  imports: { exclude: [/packages[\\/]/, /node_modules[\\/]/] },
+
   manifest: {
     name: 'Diggy — Animated Companion',
     short_name: 'Diggy',

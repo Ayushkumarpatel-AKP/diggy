@@ -11,6 +11,7 @@
     "clean": "rimraf dist .output .wxt"
   },
   "dependencies": {
+    "@diggy/agent": "workspace:*",
     "@diggy/avatar": "workspace:*",
     "@diggy/core": "workspace:*",
     "@diggy/shared": "workspace:*",
