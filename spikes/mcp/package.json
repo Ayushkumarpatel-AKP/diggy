@@ -1,0 +1,17 @@
+{
+  "name": "@diggy/mcp-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "//": [
+    "SPIKE — NOT SHIPPED. This directory is deliberately NOT listed in",
+    "pnpm-workspace.yaml, so it is not a workspace package and Turborepo never",
+    "builds, tests or typechecks it. It declares NO dependencies on purpose: it",
+    "borrows the already-installed `ai` copy from @diggy/core at runtime (see",
+    "src/ai.ts) so nothing here can pull a new package into the install."
+  ],
+  "scripts": {
+    "spike": "node --experimental-strip-types src/smoke.ts",
+    "spike:live": "node --experimental-strip-types src/smoke.ts --live"
+  }
+}
