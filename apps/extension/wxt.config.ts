@@ -12,6 +12,12 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
 
+  // WXT's auto-import scan walks every transformed module. Workspace packages are
+  // raw TypeScript sources here, and packages/agent/src/runtime.ts is dense with the
+  // bare identifier `storage` (a class field and an option key), which collided with
+  // WXT's own `storage` auto-import: it injected `wxt/storage` into a package that has
+  // no browser dependencies and killed the build. Scoping the scan to the project fixes it.
+  // @ts-expect-error — WXT's type omits unimport's `exclude`, but it is forwarded verbatim.
   imports: { exclude: [/packages[\\/]/, /node_modules[\\/]/] },
 
   manifest: {
