@@ -1,0 +1,12 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "Reading your inbox from your signed-in tab: Rust Weekly (Rust 1.85), a Hiring Team interview on Tuesday at 10:00, and three GitHub pull requests waiting for review.",
+  "toolCalls": [
+    {
+      "name": "readPage",
+      "args": {}
+    }
+  ]
+}

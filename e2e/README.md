@@ -23,7 +23,7 @@ prerequisite is missing:
 
 | Name | What it proves |
 |---|---|
-| `bot-renders` | `#diggy-avatar-host` mounts with an open shadow root containing `.diggy-bubble` and a non-zero `<canvas>`. |
+| `bot-renders` | `#diggy-avatar-host` mounts with an open shadow root containing `.diggy-bubble`; clicking the bubble's "Show Diggy" toggle expands it and mounts a non-zero `<canvas>` (the three.js/VRM avatar). |
 | `sidepanel-opens` | `sidepanel.html` renders its section nav (7 tabs) and the **Plugins** tab shows the one-click plugin gallery with inline brand icons. |
 | `form-fill-confirm` | Panel "Fill form" → **Confirm fill** plan → "Fill" → the page's inputs gain values and the form is **not submitted** (`submitCount === 0`). |
 | `reminder-fires` | A ~3 s reminder (created through the panel's own storage + `diggy:reminder-schedule` message) fires into the in-page bubble; the reminder flips to `done`. |

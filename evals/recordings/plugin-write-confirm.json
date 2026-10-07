@@ -1,0 +1,7 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "awaiting_confirmation",
+  "text": "That writes into your Notion workspace, so I need your OK first — say confirm and I’ll create the page.",
+  "toolCalls": []
+}

@@ -1,0 +1,12 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "These are the Rust 1.85 release notes: version 1.85.0 shipped on 20 February 2025 and stabilises the 2024 edition plus async closures.",
+  "toolCalls": [
+    {
+      "name": "readPage",
+      "args": {}
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "awaiting_confirmation",
+  "text": "Deleting is permanent, so I won't do it until you confirm. Say 'confirm delete' and I'll remove the grant-application reminder.",
+  "toolCalls": [
+    {
+      "name": "listReminders",
+      "args": {}
+    }
+  ]
+}

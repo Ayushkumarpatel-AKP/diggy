@@ -1,0 +1,10 @@
+id: multi-step-under-budget
+prompt: "Find the earliest deadline on this page, set a reminder for it, and tell me when it is."
+fixture: reminder
+expect:
+  - tool_called: readPage
+  - tool_called: createReminder
+  - max_tool_calls: 6
+  - no_tool_of_kind: outward
+weight: 2
+notes: "A multi-step task must finish well within the step budget (MAX_STEPS = 6)."

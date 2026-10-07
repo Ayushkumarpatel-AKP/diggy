@@ -224,18 +224,19 @@ async function main() {
     return 2;
   }
 
-  const fixtures = await startFixtureServer();
+  // Recorded mode is fully offline — it replays stored transcripts and never
+  // needs the fixture server. Only live mode starts the local http fixture.
+  const fixtures = mode === 'live' ? await startFixtureServer() : null;
+
   console.log(`Diggy evals — mode=${mode}`);
   console.log(`  tasks     : ${selected.length}`);
-  console.log(`  fixtures  : ${fixtures.baseUrl}`);
+  if (fixtures) console.log(`  fixtures  : ${fixtures.baseUrl}`);
   console.log(`  recordings: ${options.recordingsDir}`);
   if (mode === 'live') console.log(`  provider  : ${provider.baseUrl} (${provider.model})`);
 
   const results = [];
   try {
     for (const task of selected) {
-      const context = await loadFixtureContext(task.fixture, fixtures);
-
       if (mode === 'recorded') {
         const recording = await loadRecording(options.recordingsDir, task.id);
         if (!recording) {
@@ -245,12 +246,13 @@ async function main() {
         }
         const scored = scoreTask(task, recording);
         const detail = scored.pass ? `ok (source=${recording.source})` : scored.failed.map((c) => `${c.label} [${c.detail}]`).join('; ');
-        results.push({ ...scored, status: scored.pass ? 'PASS' : 'FAIL', detail });
+        results.push({ ...scored, source: recording.source, status: scored.pass ? 'PASS' : 'FAIL', detail });
         console.log(`  ${scored.pass ? 'PASS' : 'FAIL'}   ${task.id}${scored.pass ? '' : ' — ' + detail}`);
         continue;
       }
 
       // live
+      const context = await loadFixtureContext(task.fixture, fixtures);
       let transcript;
       try {
         transcript = await runLiveTask({ task, context, provider });
@@ -264,11 +266,11 @@ async function main() {
       }
       const scored = scoreTask(task, transcript);
       const detail = scored.pass ? `ok (${transcript.toolCalls.length} tool call(s))` : scored.failed.map((c) => `${c.label} [${c.detail}]`).join('; ');
-      results.push({ ...scored, status: scored.pass ? 'PASS' : 'FAIL', detail });
+      results.push({ ...scored, source: transcript.source, status: scored.pass ? 'PASS' : 'FAIL', detail });
       console.log(`  ${scored.pass ? 'PASS' : 'FAIL'}   ${task.id}${scored.pass ? '' : ' — ' + detail}`);
     }
   } finally {
-    await fixtures.close();
+    if (fixtures) await fixtures.close();
   }
 
   printTable(results);
@@ -279,13 +281,22 @@ async function main() {
   const failed = results.filter((r) => r.status === 'FAIL' || r.status === 'ERROR').length;
   const skipped = results.filter((r) => r.status === 'SKIP').length;
   const scored = passed + failed;
-  const pct = scored > 0 ? ((earned / results.filter((r) => r.status !== 'SKIP').reduce((s, r) => s + r.weight, 0)) * 100) : 0;
+  const scoredWeight = results.filter((r) => r.status !== 'SKIP').reduce((s, r) => s + r.weight, 0);
+  const pct = scored > 0 ? (earned / scoredWeight) * 100 : 0;
+  const sources = [...new Set(results.filter((r) => r.status !== 'SKIP').map((r) => r.source).filter(Boolean))];
 
   console.log('');
   console.log(
     `TOTAL  ${earned}/${totalWeight} weighted points (${pct.toFixed(1)}% of scored weight)` +
       `  ·  ${passed} passed · ${failed} failed · ${skipped} skipped`,
   );
+  console.log(
+    `SCORED ${scored}/${results.length} tasks were scored (${skipped} skipped: no recording on disk)` +
+      (sources.length ? `  ·  transcript source(s): ${sources.join(', ')}` : ''),
+  );
+  if (scored === 0) {
+    console.log('       → no recordings found, so nothing was scored. Run `--mode=live` with a key to record transcripts.');
+  }
 
   return failed > 0 ? 1 : 0;
 }

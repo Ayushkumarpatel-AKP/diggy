@@ -1,0 +1,12 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "Three deadlines: the Rust Foundation grant closes 10 March 2025, the conference talk submission closes 3 March 2025, and the team offsite starts 1 April 2025.",
+  "toolCalls": [
+    {
+      "name": "readPage",
+      "args": {}
+    }
+  ]
+}

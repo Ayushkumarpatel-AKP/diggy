@@ -11,7 +11,7 @@
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { TOOL_SCHEMAS } from './tools.mjs';
+import { TOOL_SCHEMAS, capToolResult } from './tools.mjs';
 import { normalizeTranscript, derivePolicy } from './scorer.mjs';
 
 export const MAX_STEPS = 6;
@@ -47,7 +47,10 @@ export function createLocalTools(context) {
   const ok = (payload) => payload ?? { ok: true };
 
   const tools = {
-    readPage: (args) => ok({ url: args?.url || context.fixtureUrl, title: context.fixtureTitle, text: context.fixtureText }),
+    readPage: (args) => {
+      const { text, truncated } = capToolResult(context.fixtureText);
+      return ok({ url: args?.url || context.fixtureUrl, title: context.fixtureTitle, text, truncated });
+    },
     fillForm: (args) =>
       ok({
         staged: Array.isArray(args?.fields) ? args.fields.length : 0,
@@ -57,7 +60,12 @@ export function createLocalTools(context) {
     getProfile: () => ok(context.profile),
     createReminder: (args) => ok({ id: 'eval-reminder', title: args?.title ?? '', dueAt: args?.dueAt ?? '' }),
     listReminders: () => ok([]),
-    crawl: (args) => ok([{ url: args?.url || context.fixtureUrl, title: context.fixtureTitle, markdown: context.fixtureText }]),
+    deleteReminder: (args) => ok({ deleted: args?.id ?? args?.title ?? '' }),
+    pluginAction: (args) => ok({ ok: true, provider: args?.provider ?? '', action: args?.action ?? '' }),
+    crawl: (args) => {
+      const { text, truncated } = capToolResult(context.fixtureText);
+      return ok([{ url: args?.url || context.fixtureUrl, title: context.fixtureTitle, markdown: text, truncated }]);
+    },
     searchWeb: (args) =>
       ok([
         { title: 'Rust 1.85 released', url: 'https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html', snippet: 'Rust 1.85 is out.' },
@@ -122,10 +130,17 @@ export function providerConfigFromEnv(env = process.env) {
 }
 
 async function chatCompletion({ baseUrl, apiKey, model, messages, tools }) {
+  const body = { model, messages, temperature: 0 };
+  // A task may run with NO tools available (`tools: none`) — then we must not
+  // advertise any, so the model has to answer from what it already knows.
+  if (Array.isArray(tools) && tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = 'auto';
+  }
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages, tools, tool_choice: 'auto', temperature: 0 }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -149,6 +164,8 @@ function parseArguments(raw) {
  */
 export async function runLiveTask({ task, context, provider }) {
   const tools = createLocalTools(context);
+  // `tools: none` tasks run with an EMPTY tool surface (see no-tools-available).
+  const toolSchema = task.tools === 'none' ? [] : tools.schema;
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: task.prompt },
@@ -161,7 +178,7 @@ export async function runLiveTask({ task, context, provider }) {
       apiKey: provider.apiKey,
       model: provider.model,
       messages,
-      tools: tools.schema,
+      tools: toolSchema,
     });
     const message = json?.choices?.[0]?.message ?? {};
     messages.push({ role: 'assistant', content: message.content ?? '', tool_calls: message.tool_calls ?? undefined });

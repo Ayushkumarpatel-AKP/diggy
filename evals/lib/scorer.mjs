@@ -12,6 +12,8 @@
  *   text_not_contains: <substring>
  *   no_tool_of_kind: <kind>      — no tool call of this kind (read/write/outward)
  *   policy_decision: <decision>  — transcript.policy === decision
+ *   text_max_chars: <n>          — the reply is at most n characters (no pasting)
+ *   max_tool_calls: <n>          — the transcript made at most n tool calls (step budget / no loop)
  *
  * A task passes only when **every** assertion holds.
  */
@@ -73,6 +75,18 @@ export function evaluateAssertion(entry, transcript) {
     case 'policy_decision': {
       const ok = transcript.policy === value;
       return { ok, label, detail: ok ? '' : `policy was "${transcript.policy}"` };
+    }
+    case 'text_max_chars': {
+      const limit = Number(value);
+      const length = transcript.text.length;
+      const ok = Number.isFinite(limit) && length <= limit;
+      return { ok, label, detail: ok ? '' : `reply was ${length} chars (limit ${value}) — it pasted instead of summarising` };
+    }
+    case 'max_tool_calls': {
+      const limit = Number(value);
+      const count = transcript.toolCalls.length;
+      const ok = Number.isFinite(limit) && count <= limit;
+      return { ok, label, detail: ok ? '' : `${count} tool calls (limit ${value})` };
     }
     default:
       return { ok: false, label, detail: `unknown assertion kind "${kind}"` };

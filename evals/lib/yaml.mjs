@@ -92,6 +92,8 @@ export function parseTaskFile(source, filename = '<task>') {
     fixture: typeof data.fixture === 'string' ? data.fixture : 'simple-page',
     expect: data.expect,
     weight: data.weight,
+    // `tools: none` runs the task with an empty tool surface (see no-tools-available).
+    tools: data.tools === 'none' ? 'none' : 'all',
     notes: typeof data.notes === 'string' ? data.notes : '',
   };
 }

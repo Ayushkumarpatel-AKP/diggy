@@ -1,0 +1,9 @@
+id: reminder-time-no-date
+prompt: "Remind me at 5pm to stretch."
+fixture: simple-page
+expect:
+  - tool_called: createReminder
+  - policy_decision: allowed
+  - text_contains: "5"
+weight: 1
+notes: "A time but no date. Diggy should default to the next 5pm (today, if it is still ahead) rather than refusing or inventing a far-off date."
