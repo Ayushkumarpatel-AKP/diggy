@@ -16,19 +16,25 @@ import {
   isContentCall,
   isFillApply,
   isGoogleCheck,
+  isMicPermissionRequest,
+  isMicPermissionResult,
+  isOffscreenSilence,
   isOpenUrl,
   isReadTab,
   isRecStart,
   isRecStop,
   isRecWarm,
   isWatchCheck,
+  readVoiceMode,
   type AgentAskMessage,
+  type AutoStopReason,
   type BridgeEventMessage,
   type BridgeStatusRequest,
   type BridgeStatusResponse,
   type ContentCallMessage,
   type ContentMethod,
   type ContentResponse,
+  type MicErrorReason,
   type NotifyMessage,
   type ScheduleReminderMessage,
 } from '../src/messages';
@@ -136,10 +142,21 @@ function handleMessage(
     return checkGoogle().then((result) => ({ ok: true, ...result }));
   }
   if (isRecStart(message)) {
-    return beginVoice();
+    return beginVoice({ autoStop: message.autoStop });
   }
   if (isRecStop(message)) {
     return finishVoice(sender?.tab?.id);
+  }
+  if (isMicPermissionRequest(message)) {
+    // A surface reported the microphone is blocked: open the one page that can
+    // ask for it with a real click. Nothing is recorded here.
+    return openMicPermissionPage().then(() => ({ ok: true }));
+  }
+  if (isMicPermissionResult(message)) {
+    return onMicPermissionResult(message);
+  }
+  if (isOffscreenSilence(message)) {
+    return onOffscreenSilence(message.reason);
   }
   if (isRecWarm(message)) {
     return (async () => {
@@ -469,30 +486,174 @@ async function transcribe(base64: string, mime: string): Promise<string> {
  * Voice — start / stop, shared by the shortcut, the panel and commands
  * ------------------------------------------------------------------ */
 
-/** Start recording. */
-async function beginVoice(): Promise<{ ok: boolean; error?: string }> {
-  if (!(await ensureOffscreen())) {
-    return { ok: false, error: 'Recording is unavailable in this browser.' };
+/** What the offscreen recorder answers to `diggy:offscreen-start`. */
+interface OffscreenStartReply {
+  ok?: boolean;
+  error?: string;
+  /** Present on failure, so we can tell "blocked" apart from "no device". */
+  reason?: MicErrorReason;
+}
+
+/**
+ * Set while the microphone permission page is open because a recording could
+ * not start. The page's "granted" message then retries that recording once.
+ */
+let micPermissionPending = false;
+
+/**
+ * The single in-flight stop. A page key-up, the browser command and a silence
+ * auto-stop can all race to stop the same recording; the loser of the race must
+ * reuse this promise rather than send a second stop.
+ */
+let stopInFlight: Promise<{ ok: boolean; text?: string; error?: string }> | null = null;
+
+/** The browser-level command has no key-up, so it tracks its own start/stop. */
+let commandRecording = false;
+
+/**
+ * Open the extension page that can ask for the microphone with a real click.
+ *
+ * An offscreen document has no UI, so it can never show Chrome's permission
+ * prompt — `entrypoints/permissions` exists exactly to do that. A small popup is
+ * nicer than a tab and closes itself after the grant; if the browser refuses to
+ * open one, fall back to a normal tab.
+ */
+async function openMicPermissionPage(): Promise<void> {
+  const url = browser.runtime.getURL('/permissions.html');
+  try {
+    await browser.windows.create({ url, type: 'popup', width: 420, height: 560 });
+    return;
+  } catch {
+    /* popups are not always allowed — a normal tab always is */
   }
   try {
-    const started = (await browser.runtime.sendMessage({ type: 'diggy:offscreen-start' })) as
-      | { ok?: boolean; error?: string }
-      | undefined;
-    if (started?.ok) return { ok: true };
-    return {
-      ok: false,
-      error: started?.error ?? 'Microphone unavailable — click 🎙 in the side panel once to allow it.',
-    };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Microphone unavailable.' };
+    await browser.tabs.create({ url });
+  } catch {
+    /* nothing else we can do */
   }
 }
 
-/** Stop, transcribe with Whisper, then run the brain. */
-async function finishVoice(tabId?: number): Promise<{ ok: boolean; text?: string; error?: string }> {
+/**
+ * Start recording.
+ *
+ * `autoStop` is what makes toggle mode work: the offscreen recorder then ends
+ * the clip on silence instead of waiting for a key-up. A `chrome.commands`
+ * shortcut has NO key-up event, so in toggle mode auto-stop must default ON — a
+ * browser-level command can only ever toggle. When the caller does not decide
+ * (`autoStop` left undefined) we read it from the stored `voiceMode`.
+ */
+async function beginVoice(
+  options: { autoStop?: boolean; recover?: boolean } = {},
+): Promise<{ ok: boolean; error?: string; needsPermission?: boolean }> {
+  if (!(await ensureOffscreen())) {
+    return { ok: false, error: STRINGS.voice.recordingUnavailable };
+  }
+  const autoStop = options.autoStop ?? (await readVoiceMode()) === 'toggle';
+  try {
+    const started = (await browser.runtime.sendMessage({
+      type: 'diggy:offscreen-start',
+      autoStop,
+    })) as OffscreenStartReply | undefined;
+    if (started?.ok) return { ok: true };
+
+    // `not-allowed` means the extension has no microphone permission yet. An
+    // offscreen document cannot prompt, so open the page that can — but never
+    // from a retry (`recover: false`), or a still-blocked mic would bounce the
+    // user to a fresh permission page forever.
+    if (started?.reason === 'not-allowed' && options.recover !== false) {
+      micPermissionPending = true;
+      await openMicPermissionPage();
+      return { ok: false, needsPermission: true };
+    }
+
+    return { ok: false, error: started?.error ?? STRINGS.voice.micUnavailableHint };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : STRINGS.voice.micUnavailable };
+  }
+}
+
+/**
+ * The permission page granted the microphone: retry the recording it could not
+ * start — exactly once — and tell the active tab what is happening.
+ */
+async function retryVoiceAfterPermission(): Promise<{ ok?: boolean; error?: string }> {
+  // Nothing was waiting (the user opened the page by hand): the grant is enough.
+  if (!micPermissionPending) return { ok: true };
+  micPermissionPending = false;
+
+  const tabId = await activeTabId();
+  const tell = (text: string, ok: boolean): void => {
+    if (tabId == null) return;
+    void browser.tabs.sendMessage(tabId, { type: 'diggy:agent-done', text, ok }).catch(() => undefined);
+  };
+
+  // `recover: false` never opens the permission page again. `autoStop: true`
+  // because the original key-press is long gone — the recovered clip has to end
+  // on silence, there is no key-up left to hold.
+  const started = await beginVoice({ recover: false, autoStop: true });
+  if (!started.ok) {
+    tell(started.error ?? STRINGS.voice.micUnavailable, false);
+    return { ok: false, error: started.error };
+  }
+  tell(STRINGS.voice.listening, true);
+  return { ok: true };
+}
+
+/** The permission page reported the outcome of its `getUserMedia()`. */
+function onMicPermissionResult(message: {
+  ok: boolean;
+  error?: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  if (!message.ok) {
+    // Denied or unsupported — stop waiting; the page shows the reason itself.
+    micPermissionPending = false;
+    return Promise.resolve({ ok: false, error: message.error });
+  }
+  return retryVoiceAfterPermission();
+}
+
+/**
+ * The offscreen recorder heard silence (or hit its cap) and asked us to stop.
+ *
+ * The recorder deliberately never stops itself: this is the one stop path, so a
+ * clip can neither be dropped nor sent twice.
+ */
+async function onOffscreenSilence(reason: AutoStopReason): Promise<void> {
+  const tabId = await activeTabId();
+  const payload = { type: 'diggy:rec-auto-stop', reason };
+  // The in-page bubble lives in the active tab …
+  if (tabId != null) {
+    void browser.tabs.sendMessage(tabId, payload).catch(() => undefined);
+  }
+  // … while the side panel is an extension page, not a tab, so it needs the
+  // runtime broadcast to drop its own toggle state.
+  void browser.runtime.sendMessage(payload).catch(() => undefined);
+  commandRecording = false;
+  await finishVoice(tabId);
+}
+
+/**
+ * Stop, transcribe with Whisper, then run the brain.
+ *
+ * A page shortcut key-up, the browser command and a silence auto-stop can all
+ * reach here for the same recording. The first call runs the real stop; every
+ * other caller gets the same in-flight promise back instead of a second
+ * `diggy:offscreen-stop` — which the recorder would answer with a bogus
+ * "not recording" after the first one had already produced a good reply.
+ */
+function finishVoice(tabId?: number): Promise<{ ok: boolean; text?: string; error?: string }> {
+  if (stopInFlight) return stopInFlight;
+  const run = finishVoiceOnce(tabId).finally(() => {
+    stopInFlight = null;
+  });
+  stopInFlight = run;
+  return run;
+}
+
+async function finishVoiceOnce(tabId?: number): Promise<{ ok: boolean; text?: string; error?: string }> {
   const recorded = (await browser.runtime
     .sendMessage({ type: 'diggy:offscreen-stop' })
-    .catch(() => ({ ok: false, error: 'Microphone unavailable.' }))) as
+    .catch(() => ({ ok: false, error: STRINGS.voice.micUnavailable }))) as
     | { ok?: boolean; base64?: string; mime?: string; error?: string }
     | undefined;
   if (!recorded?.ok || !recorded.base64) {
@@ -504,7 +665,7 @@ async function finishVoice(tabId?: number): Promise<{ ok: boolean; text?: string
   }
   try {
     const text = await transcribe(recorded.base64, recorded.mime ?? 'audio/webm');
-    if (!text) return { ok: false, error: 'I could not hear anything.' };
+    if (!text) return { ok: false, error: STRINGS.voice.couldNotHear };
     // Show the user what was heard before the reply streams in.
     if (tabId != null) {
       void browser.tabs.sendMessage(tabId, { type: 'diggy:agent-heard', text }).catch(() => undefined);
@@ -520,11 +681,11 @@ async function finishVoice(tabId?: number): Promise<{ ok: boolean; text?: string
  * Browser-level shortcut (`commands`).
  *
  * A page never sees a chord another extension has already claimed as a global
- * command, so this is the guaranteed keyboard path. Commands have no key-up, so
- * it toggles: press to start, press again to send.
+ * command, so this is the guaranteed keyboard path. `chrome.commands` has NO
+ * key-up event, so this always toggles: press to start, press again to send.
+ * `beginVoice()` reads the stored `voiceMode`, so in toggle mode the recorder
+ * also ends the clip on silence — a browser-level command can only ever toggle.
  */
-let commandRecording = false;
-
 async function toggleVoiceCommand(): Promise<void> {
   const tabId = (await activeTabId()) ?? undefined;
   const tell = (payload: unknown): void => {
@@ -535,17 +696,17 @@ async function toggleVoiceCommand(): Promise<void> {
   if (commandRecording) {
     commandRecording = false;
     const result = await finishVoice(tabId);
-    if (!result.ok) tell({ type: 'diggy:agent-done', text: result.error ?? 'Voice failed.', ok: false });
+    if (!result.ok) tell({ type: 'diggy:agent-done', text: result.error ?? STRINGS.voice.voiceFailed, ok: false });
     return;
   }
 
   const started = await beginVoice();
   if (!started.ok) {
-    tell({ type: 'diggy:agent-done', text: started.error ?? 'Microphone unavailable.', ok: false });
+    tell({ type: 'diggy:agent-done', text: started.error ?? STRINGS.voice.micUnavailable, ok: false });
     return;
   }
   commandRecording = true;
-  tell({ type: 'diggy:agent-delta', text: '🎙 Listening… press the shortcut again to send.' });
+  tell({ type: 'diggy:agent-delta', text: STRINGS.voice.listening });
 }
 
 /* ------------------------------------------------------------------ *

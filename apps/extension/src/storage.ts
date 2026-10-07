@@ -34,6 +34,13 @@ export interface Settings {
   apiUrl: string;
   /** Speak assistant replies aloud when possible. */
   voiceEnabled: boolean;
+  /**
+   * Push-to-talk behaviour. `hold` (the default) records while the shortcut is
+   * held and sends on release; `toggle` starts on one press and sends on the
+   * next — or by itself once the offscreen recorder hears silence. A
+   * `chrome.commands` shortcut has no key-up, so it can only ever toggle.
+   */
+  voiceMode: 'hold' | 'toggle';
   /** Show the floating in-page avatar bubble by default. */
   avatarVisible: boolean;
   /**
@@ -98,6 +105,9 @@ export const DEFAULT_SETTINGS: Settings = {
   crawlerUrl: CRAWLER_DEFAULT_URL,
   apiUrl: API_DEFAULT_URL,
   voiceEnabled: true,
+  // Hold-to-talk by default: today's behaviour is unchanged unless the user
+  // flips the Settings toggle to press-to-talk (toggle) mode.
+  voiceMode: 'hold',
   avatarVisible: true,
   // Lazy by default: the bubble is created hidden and the model is fetched the
   // first time the avatar is shown (see `avatarAutoLoad` above).
