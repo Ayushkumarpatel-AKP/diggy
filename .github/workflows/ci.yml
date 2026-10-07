@@ -48,10 +48,10 @@ jobs:
 
       # Same exclusions the team uses locally: skip the desktop shell and the bridge.
       - name: Typecheck
-        run: pnpm run typecheck -- --filter=!@diggy/desktop --filter=!@diggy/bridge
+        run: pnpm run typecheck -- --filter=!@diggy/bridge
 
       - name: Test
-        run: pnpm run test -- --filter=!@diggy/desktop --filter=!@diggy/bridge
+        run: pnpm run test -- --filter=!@diggy/bridge
 
       - name: Build extension
         run: pnpm --filter @diggy/extension build
