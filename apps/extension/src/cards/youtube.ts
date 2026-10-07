@@ -282,12 +282,20 @@ function fromVideoId(videoId: string, title = ''): YouTubeVideo {
 function looksRelevant(name: string, haystack: string): boolean {
   const compact = name.toLowerCase().replace(/[^a-z0-9]/g, '');
   const flat = haystack.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Strongest signal: the whole name with the spaces removed
+  // ("mr beast" -> "mrbeast").
   if (compact.length >= 4 && flat.includes(compact)) return true;
-  const tokens = name
+
+  const words = name
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((token) => token.length >= 3);
-  return tokens.length > 0 && tokens.every((token) => flat.includes(token));
+  if (words.length === 0) return false;
+  // A single generic word ("beast", "news", "music") matches half of YouTube and
+  // used to hand back a completely unrelated video. Insist the whole name is
+  // present and reasonably specific before trusting it.
+  if (words.length === 1) return compact.length >= 7 && flat.includes(words[0]!);
+  return words.every((token) => flat.includes(token));
 }
 
 /**
@@ -369,16 +377,30 @@ const FILLER =
  * read as "the latest video of <channel>" returns `undefined`, so the message
  * simply flows to the model as usual.
  */
+/**
+ * Times and dates are never part of a name: "open the MrBeast video at 2.28 pm"
+ * must resolve "MrBeast", not "mr beast 2.28 pm" (which matched nothing and
+ * handed back a random video).
+ *
+ * Deliberately conservative — a bare number is left alone so "5 Minute Crafts"
+ * survives; only a number with am/pm, a "baje" clock, or a day word is dropped.
+ */
+const WHEN =
+  /\b\d{1,2}([.:]\d{2})?\s*(am|pm|a\.m|p\.m)\b|\b\d{1,2}\s*(baje|o'?clock)\b|\b(today|tonight|tomorrow|morning|evening|night|kal|aaj|shaam|subah)\b/gi;
+
 export function parseVideoRequest(text: string): string | undefined {
   const source = (text ?? '').trim();
   if (!source || !VIDEO_WORD.test(source)) return undefined;
-  // "latest" is implied by an explicit ask ("play mr beast's video").
+  // "latest" is implied by an explicit ask ("mr beast ka video kholo").
   if (!WANT_LATEST.test(source) && !PLAY_VERB.test(source)) return undefined;
   const cleaned = source
+    .replace(WHEN, ' ')
     .replace(NOISE, ' ')
     .replace(FILLER, ' ')
     .replace(/[^\p{L}\p{N}\s@._-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return cleaned.length >= 2 ? cleaned : undefined;
+  // A name made only of numbers/separators is not a channel.
+  if (cleaned.length < 2 || !/\p{L}/u.test(cleaned)) return undefined;
+  return cleaned;
 }
