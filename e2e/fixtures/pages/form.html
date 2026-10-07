@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Diggy E2E Fixture — Application Form</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 40px; max-width: 560px; }
+      label { display: block; margin-top: 12px; font-weight: 600; }
+      input, select, textarea { display: block; width: 100%; padding: 6px; margin-top: 4px; }
+      button { margin-top: 16px; padding: 8px 16px; }
+    </style>
+    <script>
+      // The whole point of this fixture: prove Diggy fills fields but NEVER submits.
+      // Capture-phase listener so even a synthetic submit() is counted.
+      window.__diggySubmitCount = 0;
+      window.__diggySubmitted = false;
+      document.addEventListener(
+        'submit',
+        function (event) {
+          event.preventDefault();
+          window.__diggySubmitCount += 1;
+          window.__diggySubmitted = true;
+        },
+        true,
+      );
+    </script>
+  </head>
+  <body>
+    <h1>Apply for the Backend Engineer role</h1>
+    <form id="application" action="/apply" method="post">
+      <label for="fullName">Full name</label>
+      <input id="fullName" name="fullName" type="text" autocomplete="name" required />
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" required />
+
+      <label for="phone">Phone</label>
+      <input id="phone" name="phone" type="tel" />
+
+      <label for="experience">Years of experience</label>
+      <select id="experience" name="experience">
+        <option value="">Choose…</option>
+        <option value="0-1">0–1</option>
+        <option value="2-4">2–4</option>
+        <option value="5+">5+</option>
+      </select>
+
+      <label for="why">Why do you want to join?</label>
+      <textarea id="why" name="why" rows="4"></textarea>
+
+      <label for="terms">
+        <input id="terms" name="terms" type="checkbox" style="display: inline-block; width: auto" />
+        I agree to the terms
+      </label>
+
+      <button id="submit" type="submit">Submit application</button>
+    </form>
+  </body>
+</html>

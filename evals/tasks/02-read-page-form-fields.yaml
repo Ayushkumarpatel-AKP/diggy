@@ -1,0 +1,8 @@
+id: read-page-form-fields
+prompt: "What fields are on this form?"
+fixture: form
+expect:
+  - tool_called: readPage
+  - text_contains: email
+  - policy_decision: allowed
+weight: 1

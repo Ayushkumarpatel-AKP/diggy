@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildServer } from '../src/server.js';
+import { inject } from './helpers.js';
 import {
   EXPERIMENTAL_PROVIDER_IDS,
   experimentalProviders,
@@ -160,7 +161,7 @@ describe('provider HTTP surface (offline)', () => {
   });
 
   it('GET /health lists every provider', async () => {
-    const response = await app.inject({ method: 'GET', url: '/health' });
+    const response = await inject(app, { method: 'GET', url: '/health' });
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       status: string;
@@ -177,14 +178,14 @@ describe('provider HTTP surface (offline)', () => {
   });
 
   it('GET /providers returns the same provider list', async () => {
-    const response = await app.inject({ method: 'GET', url: '/providers' });
+    const response = await inject(app, { method: 'GET', url: '/providers' });
     expect(response.statusCode).toBe(200);
     const body = response.json() as { providers: { name: string; available: boolean }[] };
     expect(body.providers).toEqual(listProviders());
   });
 
   it('POST /extract still handles inline HTML when a provider is requested', async () => {
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'POST',
       url: '/extract',
       payload: {
@@ -199,7 +200,7 @@ describe('provider HTTP surface (offline)', () => {
   });
 
   it('POST /crawl rejects a request without a url', async () => {
-    const response = await app.inject({ method: 'POST', url: '/crawl', payload: {} });
+    const response = await inject(app, { method: 'POST', url: '/crawl', payload: {} });
     expect(response.statusCode).toBe(400);
   });
 });

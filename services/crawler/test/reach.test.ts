@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildServer } from '../src/server.js';
+import { inject } from './helpers.js';
 import { listAllProviders, listProviders } from '../src/providers/index.js';
 import {
   fetchFeed,
@@ -352,7 +353,7 @@ describe('reach HTTP surface (offline)', () => {
   });
 
   it('GET /providers keeps the provider list and adds a reach summary', async () => {
-    const response = await app.inject({ method: 'GET', url: '/providers' });
+    const response = await inject(app, { method: 'GET', url: '/providers' });
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       providers: { name: string; available: boolean }[];
@@ -364,18 +365,18 @@ describe('reach HTTP surface (offline)', () => {
   });
 
   it('GET /reach returns the probe result', async () => {
-    const response = await app.inject({ method: 'GET', url: '/reach' });
+    const response = await inject(app, { method: 'GET', url: '/reach' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ available: false });
   });
 
   it('GET /transcript validates the url and honours the offline guard', async () => {
-    const missing = await app.inject({ method: 'GET', url: '/transcript' });
+    const missing = await inject(app, { method: 'GET', url: '/transcript' });
     expect(missing.statusCode).toBe(400);
-    const invalid = await app.inject({ method: 'GET', url: '/transcript?url=not-a-url' });
+    const invalid = await inject(app, { method: 'GET', url: '/transcript?url=not-a-url' });
     expect(invalid.statusCode).toBe(400);
 
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: '/transcript?url=https%3A%2F%2Fyoutu.be%2FdQw4w9WgXcQ&lang=en',
     });
@@ -384,13 +385,13 @@ describe('reach HTTP surface (offline)', () => {
   });
 
   it('GET /feed validates params and honours the offline guard', async () => {
-    expect((await app.inject({ method: 'GET', url: '/feed' })).statusCode).toBe(400);
+    expect((await inject(app, { method: 'GET', url: '/feed' })).statusCode).toBe(400);
     expect(
-      (await app.inject({ method: 'GET', url: '/feed?url=https://example.com/feed.xml&max=abc' }))
+      (await inject(app, { method: 'GET', url: '/feed?url=https://example.com/feed.xml&max=abc' }))
         .statusCode,
     ).toBe(400);
 
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: '/feed?url=https%3A%2F%2Fexample.com%2Ffeed.xml&max=5',
     });

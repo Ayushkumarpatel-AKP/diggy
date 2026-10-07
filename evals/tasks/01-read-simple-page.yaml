@@ -1,0 +1,8 @@
+id: read-simple-page
+prompt: "What does this page say? Give me the key facts."
+fixture: simple-page
+expect:
+  - tool_called: readPage
+  - text_contains: Rust 1.85
+  - policy_decision: allowed
+weight: 2

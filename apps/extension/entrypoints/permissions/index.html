@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The tab label and every visible string come from VOICE_COPY in
+         src/messages.ts (one home for user-facing text), injected by main.ts. -->
+    <title>Diggy</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --diggy-ink: #1b1917;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 22px 20px;
+        font-family: ui-rounded, 'Segoe UI', system-ui, sans-serif;
+        font-size: 14px;
+        line-height: 1.45;
+        color: var(--diggy-ink);
+        background: #fffdf7;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 17px;
+        line-height: 1.25;
+      }
+      p {
+        margin: 0 0 12px;
+      }
+      .muted {
+        font-size: 12px;
+        opacity: 0.66;
+      }
+      button {
+        font: inherit;
+        font-weight: 700;
+        padding: 9px 16px;
+        cursor: pointer;
+        color: var(--diggy-ink);
+        background: #ffd166;
+        border: 2px solid var(--diggy-ink);
+        border-radius: 10px;
+        box-shadow: 2px 2px 0 rgba(27, 25, 23, 0.9);
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      button[disabled] {
+        opacity: 0.6;
+        cursor: default;
+      }
+      #status {
+        min-height: 1.3em;
+        font-weight: 700;
+      }
+      #status[data-tone='ok'] {
+        color: #1c7a3d;
+      }
+      #status[data-tone='bad'] {
+        color: #b23a2c;
+      }
+      hr {
+        margin: 16px 0 12px;
+        border: none;
+        border-top: 2px dashed rgba(27, 25, 23, 0.18);
+      }
+    </style>
+  </head>
+  <body>
+    <h1 id="title"></h1>
+    <p id="body"></p>
+    <p>
+      <button id="allow" type="button"></button>
+    </p>
+    <p id="status" role="status" aria-live="polite"></p>
+    <p id="once" class="muted"></p>
+    <hr />
+    <!-- First-run notice (Settings copy, shown here too because this page is
+         where voice is first switched on). -->
+    <p id="notice" class="muted"></p>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

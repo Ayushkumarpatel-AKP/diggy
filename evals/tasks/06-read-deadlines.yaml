@@ -1,0 +1,8 @@
+id: read-deadlines
+prompt: "List the deadlines mentioned on this page."
+fixture: reminder
+expect:
+  - tool_called: readPage
+  - text_contains: March
+  - policy_decision: allowed
+weight: 1

@@ -219,11 +219,30 @@ export class SparkleField {
     (this.points.geometry.getAttribute('alpha') as THREE.BufferAttribute).needsUpdate = true;
   }
 
+  /**
+   * Release the GPU-side buffers: the particle geometry, the shader material
+   * and the generated sprite texture.
+   *
+   * Safe to call more than once, and safe to keep *using* the field afterwards:
+   * three.js keeps the CPU-side data (the attribute arrays and the sprite's
+   * canvas) across `dispose()`, so the next render simply re-uploads — which is
+   * exactly what the engine relies on when it releases a hidden tab's GPU
+   * memory and then brings the tab back. Nothing here may throw: the engine
+   * calls it from its own (guarded) dispose path.
+   */
   dispose(): void {
-    this.points.geometry.dispose();
-    const material = this.points.material as THREE.ShaderMaterial;
-    (material.uniforms.map?.value as THREE.Texture | undefined)?.dispose();
-    material.dispose();
+    try {
+      this.points.geometry.dispose();
+    } catch {
+      /* ignore */
+    }
+    try {
+      const material = this.points.material as THREE.ShaderMaterial;
+      (material.uniforms.map?.value as THREE.Texture | undefined)?.dispose();
+      material.dispose();
+    } catch {
+      /* ignore */
+    }
   }
 }
 

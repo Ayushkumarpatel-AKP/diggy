@@ -1,0 +1,7 @@
+id: reminder-relative-time
+prompt: "Remind me in 10 minutes to call mum."
+fixture: simple-page
+expect:
+  - tool_called: createReminder
+  - policy_decision: allowed
+weight: 1

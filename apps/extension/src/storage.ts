@@ -36,6 +36,21 @@ export interface Settings {
   voiceEnabled: boolean;
   /** Show the floating in-page avatar bubble by default. */
   avatarVisible: boolean;
+  /**
+   * Fetch the VRM model eagerly when the bubble is created, instead of the
+   * first time the avatar is actually shown. Default `false`: the bubble is
+   * created hidden and the 17 MB model is only fetched once the avatar is
+   * revealed (the user's first interaction, or the first assistant reply).
+   */
+  avatarAutoLoad?: boolean;
+  /**
+   * Extra hostnames that must never show the in-page avatar, on top of the
+   * built-in sensitive-site list (see {@link DEFAULT_AVATAR_DISABLED_SITES}).
+   * Plain hostnames or `*.` suffixes, e.g. `my-bank.example`, `*.corp.internal`.
+   *
+   * A list we cannot parse fails **closed**: see {@link isAvatarDisabledForHost}.
+   */
+  avatarDisabledSites?: string[];
   /** Push-to-talk shortcut (hold to talk), e.g. "Ctrl+Shift+Space". */
   shortcut: string;
   /** Google OAuth client id (Web application) for Gmail + Calendar. */
@@ -84,6 +99,10 @@ export const DEFAULT_SETTINGS: Settings = {
   apiUrl: API_DEFAULT_URL,
   voiceEnabled: true,
   avatarVisible: true,
+  // Lazy by default: the bubble is created hidden and the model is fetched the
+  // first time the avatar is shown (see `avatarAutoLoad` above).
+  avatarAutoLoad: false,
+  avatarDisabledSites: [],
   shortcut: 'Ctrl+Space',
   googleClientId: ENV.VITE_GOOGLE_CLIENT_ID ?? '',
   gmailSession: false,
@@ -98,6 +117,144 @@ export const DEFAULT_SETTINGS: Settings = {
 export function activeApiKey(settings: Settings): string {
   const key = settings.provider === 'nvidia' ? settings.nvidiaKey : settings.groqKey;
   return (key ?? '').trim();
+}
+
+/* ------------------------------------------------------------------ *
+ * Per-site avatar disable list
+ * ------------------------------------------------------------------ */
+
+/**
+ * Hosts where the in-page avatar must **never** mount.
+ *
+ * The security brief's "do not draw a bot on top of this" sites fall into four
+ * families — banking, payments, password managers and health portals — because
+ * an overlay on those pages is at best a phish-shaped distraction and at worst
+ * a privacy leak (the bot's reader/form-filler running beside a login, a
+ * stranger's face over a balance). This is the shipped default; users can add
+ * their own entries via {@link Settings.avatarDisabledSites}, but the built-in
+ * entries are always applied.
+ *
+ * Matching is a plain case-insensitive hostname *suffix* match — never a regex
+ * — so a hostile or malformed entry can neither widen the match nor hang the
+ * matcher.
+ */
+export const DEFAULT_AVATAR_DISABLED_SITES: readonly string[] = [
+  // --- Banking -------------------------------------------------------
+  'hdfcbank.com',
+  'icicibank.com',
+  'sbi.co.in',
+  'onlinesbi.sbi',
+  'axisbank.com',
+  'kotak.com',
+  'yesbank.in',
+  'indusind.com',
+  'bankofindia.co.in',
+  'rbi.org.in',
+  'chase.com',
+  'bankofamerica.com',
+  'wellsfargo.com',
+  'citibank.com',
+  'capitalone.com',
+  'hsbc.com',
+  'barclays.co.uk',
+  'lloydsbank.com',
+  'natwest.com',
+  'monzo.com',
+  'revolut.com',
+  'deutsche-bank.de',
+  'bnpparibas.com',
+  // --- Payments / checkout ------------------------------------------
+  'paypal.com',
+  'stripe.com',
+  'razorpay.com',
+  'paytm.com',
+  'phonepe.com',
+  'wise.com',
+  'squareup.com',
+  'checkout.com',
+  'adyen.com',
+  'klarna.com',
+  'coinbase.com',
+  'binance.com',
+  // --- Password managers / identity ---------------------------------
+  '1password.com',
+  'lastpass.com',
+  'bitwarden.com',
+  'dashlane.com',
+  'keeper.com',
+  'nordpass.com',
+  'keepersecurity.com',
+  'okta.com',
+  'authy.com',
+  'duo.com',
+  // --- Health portals ------------------------------------------------
+  'nhs.uk',
+  'kaiserpermanente.org',
+  'mychart.org',
+  'mayoclinic.org',
+  'practo.com',
+  'apollopharmacy.in',
+  'netmeds.com',
+  'pharmeasy.in',
+  'cvs.com',
+  'walgreens.com',
+  // --- Government / tax ---------------------------------------------
+  'incometax.gov.in',
+  'uidai.gov.in',
+  'irs.gov',
+];
+
+/**
+ * Turn one user entry into a comparable hostname, or `null` when it is junk.
+ *
+ * Accepts a bare host, a `*.host` wildcard, or a pasted URL. Anything that
+ * still contains characters a hostname cannot (after stripping a scheme, a
+ * path, a port and leading/trailing dots) is rejected so the caller can fail
+ * closed.
+ */
+function normaliseHostPattern(entry: string): string | null {
+  let value = entry.trim().toLowerCase();
+  if (value === '') return null;
+  value = value.replace(/^[a-z][a-z0-9+.-]*:\/\//, ''); // strip scheme://
+  value = value.split('/')[0] ?? ''; // strip path
+  value = value.split(':')[0] ?? ''; // strip :port
+  value = value.replace(/^\*\./, ''); // strip a leading *. wildcard
+  value = value.replace(/^\.+|\.+$/g, ''); // trim stray dots
+  if (value === '' || /[^a-z0-9.-]/.test(value)) return null;
+  return value;
+}
+
+/**
+ * True when the avatar must not mount on `hostname`.
+ *
+ * **Fails closed.** If the host is missing, or the stored list exists but is
+ * not an array, or *any* entry cannot be parsed into a hostname, we refuse to
+ * mount rather than guess — the safe default is "no bot on this page". The
+ * built-in {@link DEFAULT_AVATAR_DISABLED_SITES} list is always applied on top
+ * of whatever the user added.
+ */
+export function isAvatarDisabledForHost(
+  hostname: unknown,
+  settings: Settings | null | undefined,
+): boolean {
+  if (typeof hostname !== 'string' || hostname.trim() === '') return true;
+  const host = hostname.trim().toLowerCase();
+  if (/[^a-z0-9.-]/.test(host)) return true; // not a plain host → distrust it
+
+  const raw = settings?.avatarDisabledSites;
+  if (raw !== undefined && raw !== null && !Array.isArray(raw)) return true; // corrupt list → fail closed
+
+  const patterns: string[] = [...DEFAULT_AVATAR_DISABLED_SITES];
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (typeof entry !== 'string') return true; // malformed entry → fail closed
+      const pattern = normaliseHostPattern(entry);
+      if (pattern === null) return true; // unparseable entry → fail closed
+      patterns.push(pattern);
+    }
+  }
+
+  return patterns.some((pattern) => host === pattern || host.endsWith(`.${pattern}`));
 }
 
 export const BRIDGE_PROTOCOL = BRIDGE_PROTOCOL_VERSION;

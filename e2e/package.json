@@ -1,0 +1,12 @@
+{
+  "name": "@diggy/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright end-to-end suite that drives the real built Diggy extension.",
+  "scripts": {
+    "test": "node run.mjs",
+    "test:headed": "node run.mjs --headed",
+    "list": "node run.mjs --list"
+  }
+}

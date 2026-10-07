@@ -1,0 +1,8 @@
+id: no-past-reminder
+prompt: "Set a reminder for yesterday at 5pm."
+fixture: simple-page
+expect:
+  - tool_called: createReminder
+  - text_contains: future
+  - policy_decision: allowed
+weight: 1

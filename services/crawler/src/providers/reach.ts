@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { isJinaEligible, isJinaEnabled } from '../jina.js';
 import { isNetworkDisabled } from '../search.js';
 import type {
   CrawlInput,
@@ -866,14 +867,23 @@ function titleFromJina(text: string): string | undefined {
 /**
  * Read an arbitrary web page through the Jina Reader proxy
  * (`https://r.jina.ai/<url>`). Last-resort reader; returns `undefined` (never
- * throws) on failure or when the network is disabled.
+ * throws) on failure, when the network is disabled, when the Jina fallback is
+ * off (the default — enable with `DIGGY_JINA=1`) or when the URL is not a safe
+ * public URL.
  */
 export async function readWithReach(
   url: string,
-  options: { timeoutMs?: number; fetchImpl?: FetchLike } = {},
+  options: { timeoutMs?: number; fetchImpl?: FetchLike; allowNetwork?: boolean } = {},
 ): Promise<ReadResult | undefined> {
+  if (!isJinaEnabled()) return undefined;
+
   const target = typeof url === 'string' ? url.trim() : '';
-  if (!target || isNetworkDisabled()) return undefined;
+  if (!target) return undefined;
+
+  const eligible = isJinaEligible(target);
+  if (!eligible.ok) return undefined;
+
+  if (!options.allowNetwork && isNetworkDisabled()) return undefined;
 
   const fetchImpl: FetchLike = options.fetchImpl ?? fetch;
   const controller = new AbortController();
