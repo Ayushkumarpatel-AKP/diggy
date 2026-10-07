@@ -211,10 +211,38 @@ function handleMessage(
  * manual page refresh. This injects it back.
  */
 /**
+ * Wait until a tab has finished loading (or we give up).
+ *
+ * A fixed sleep was the wrong tool: it wasted seconds on fast pages and still
+ * read slow ones half-rendered. This resolves the moment the load event fires.
+ */
+function waitForTabLoad(tabId: number, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        browser.tabs.onUpdated.removeListener(listener);
+      } catch {
+        /* listener already gone */
+      }
+      resolve();
+    };
+    const listener = (id: number, info: { status?: string }): void => {
+      if (id === tabId && info.status === 'complete') finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    browser.tabs.onUpdated.addListener(listener);
+  });
+}
+
+/**
  * Read a URL through the user's own browser session.
  *
  * Uses a tab the user already has open on that site; otherwise it opens one in
- * the background, waits for it to settle, reads it with the content script, and
+ * the background, waits for the load, reads it with the content script, and
  * closes it again. This is what makes "what messages came on LinkedIn" work —
  * an anonymous fetch only ever reaches the login page.
  */
@@ -228,8 +256,11 @@ async function readTabForUser(url: string): Promise<{ ok: boolean; title?: strin
       const tab = await browser.tabs.create({ url, active: false });
       tabId = tab.id ?? undefined;
       created = tabId;
-      // Let the page (and its app JS) finish before we read the DOM.
-      await new Promise((resolve) => setTimeout(resolve, 7000));
+      if (tabId != null) {
+        await waitForTabLoad(tabId, 12_000);
+        // A short settle so client-side rendering has drawn the list.
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
     }
     if (tabId == null) return { ok: false };
 
