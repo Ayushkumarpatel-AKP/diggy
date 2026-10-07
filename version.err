@@ -1,0 +1,3 @@
+usage: agent-reach [-h] [-v] [--version]
+                   {setup,install,configure,doctor,uninstall,skill,format,transcribe,check-update,watch,version} ...
+agent-reach: error: unrecognized arguments: ; echo ---exit=0---; type version.err; del version.err

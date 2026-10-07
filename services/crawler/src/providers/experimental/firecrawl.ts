@@ -4,7 +4,7 @@ import {
   callFetch,
   delay,
   readJson,
-} from './http.js';
+} from '../http.js';
 import {
   DEFAULT_FIRECRAWL_API_BASE,
   type CrawlInput,
@@ -13,7 +13,7 @@ import {
   type ProviderExtract,
   type ProviderPage,
   type ProviderSettings,
-} from './types.js';
+} from '../types.js';
 
 export const FIRECRAWL_PROVIDER_NAME = 'firecrawl';
 

@@ -1,6 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildServer } from '../src/server.js';
-import { listProviders, resolveProvider } from '../src/providers/index.js';
+import {
+  EXPERIMENTAL_PROVIDER_IDS,
+  experimentalProviders,
+  listProviders,
+  resolveProvider,
+} from '../src/providers/index.js';
 
 const ENV_KEYS = [
   'FIRECRAWL_API_KEY',
@@ -8,6 +13,8 @@ const ENV_KEYS = [
   'CRAWL4AI_URL',
   'BROWSER_USE_URL',
 ] as const;
+
+const EXPERIMENTAL_NAMES = [...EXPERIMENTAL_PROVIDER_IDS] as readonly string[];
 
 let saved: Record<string, string | undefined> = {};
 
@@ -33,7 +40,9 @@ describe('resolveProvider (no env vars)', () => {
     expect(resolveProvider(undefined).available()).toBe(true);
   });
 
-  it('falls back to builtin when the preferred provider is unavailable', () => {
+  it('falls back to builtin when the preferred provider is not a default provider', () => {
+    // The paid vendors are no longer part of the default surface, so naming one
+    // (or an unknown id) resolves to the always-available built-in crawler.
     expect(resolveProvider('firecrawl').name).toBe('builtin');
     expect(resolveProvider('crawl4ai').name).toBe('builtin');
     expect(resolveProvider('browser-use').name).toBe('builtin');
@@ -53,14 +62,22 @@ describe('resolveProvider (no env vars)', () => {
 });
 
 describe('listProviders (no env vars)', () => {
-  it('marks network providers unavailable and the builtin provider available', () => {
-    const byName = Object.fromEntries(listProviders().map((p) => [p.name, p.available]));
+  it('lists the opt-in vendors as unavailable/experimental and builtin as available', () => {
+    const rows = listProviders();
+    const byName = Object.fromEntries(rows.map((p) => [p.name, p.available]));
     expect(byName).toEqual({
       firecrawl: false,
       crawl4ai: false,
       'browser-use': false,
       builtin: true,
     });
+
+    // The paid vendors are still listed, but only as experimental (never usable).
+    const experimental = rows.filter((p) => p.experimental === true);
+    expect(experimental.map((p) => p.name)).toEqual([...EXPERIMENTAL_PROVIDER_IDS]);
+    for (const row of experimental) {
+      expect(row.available).toBe(false);
+    }
   });
 
   it('reports providers in a stable preference order', () => {
@@ -73,29 +90,65 @@ describe('listProviders (no env vars)', () => {
   });
 });
 
-describe('resolveProvider (with env vars configured)', () => {
-  it('prefers firecrawl when its API key is present', () => {
+describe('resolveProvider (with vendor env vars configured)', () => {
+  it('never selects firecrawl, even when its API key is present', () => {
     process.env.FIRECRAWL_API_KEY = 'test-key';
-    expect(resolveProvider().name).toBe('firecrawl');
-    expect(resolveProvider('firecrawl').name).toBe('firecrawl');
-    expect(listProviders().find((p) => p.name === 'firecrawl')?.available).toBe(true);
+    expect(resolveProvider().name).toBe('builtin');
+    expect(resolveProvider('firecrawl').name).toBe('builtin');
+
+    // It is still listed, but only as an unavailable/experimental vendor.
+    const firecrawl = listProviders().find((p) => p.name === 'firecrawl');
+    expect(firecrawl?.available).toBe(false);
+    expect(firecrawl?.experimental).toBe(true);
   });
 
-  it('prefers crawl4ai when only its URL is present', () => {
+  it('never selects crawl4ai, even when only its URL is present', () => {
     process.env.CRAWL4AI_URL = 'http://127.0.0.1:11235';
-    expect(resolveProvider().name).toBe('crawl4ai');
+    expect(resolveProvider().name).toBe('builtin');
+    expect(resolveProvider('crawl4ai').name).toBe('builtin');
   });
 
-  it('prefers browser-use when only its URL is present', () => {
+  it('never selects browser-use, even when only its URL is present', () => {
     process.env.BROWSER_USE_URL = 'http://127.0.0.1:8000';
-    expect(resolveProvider().name).toBe('browser-use');
+    expect(resolveProvider().name).toBe('builtin');
+    expect(resolveProvider('browser-use').name).toBe('builtin');
   });
 
-  it('honours an explicit preference over the default order', () => {
+  it('reveals the vendor adapters only through the explicit opt-in', async () => {
     process.env.FIRECRAWL_API_KEY = 'test-key';
     process.env.BROWSER_USE_URL = 'http://127.0.0.1:8000';
-    expect(resolveProvider('browser-use').name).toBe('browser-use');
-    expect(resolveProvider().name).toBe('firecrawl');
+    expect(resolveProvider().name).toBe('builtin');
+
+    const optedIn = await experimentalProviders(true);
+    expect(optedIn.map((p) => p.name)).toEqual([
+      'firecrawl',
+      'crawl4ai',
+      'browser-use',
+      'builtin',
+      'reach',
+    ]);
+  });
+});
+
+describe('default provider surface', () => {
+  it('never includes an experimental (paid vendor) id', async () => {
+    // The default set (opt-in disabled) must not contain any experimental id.
+    const defaults = await experimentalProviders(false);
+    for (const provider of defaults) {
+      expect(EXPERIMENTAL_NAMES).not.toContain(provider.name);
+    }
+    expect(defaults.map((provider) => provider.name)).toEqual(['builtin', 'reach']);
+
+    // Opting in still surfaces every vendor adapter from its new home.
+    const optedIn = await experimentalProviders(true);
+    const optedInNames = optedIn.map((provider) => provider.name);
+    for (const id of EXPERIMENTAL_PROVIDER_IDS) {
+      expect(optedInNames).toContain(id);
+    }
+
+    // And default routing can never reach a vendor, even with its key configured.
+    process.env.FIRECRAWL_API_KEY = 'test-key';
+    expect(resolveProvider().name).toBe('builtin');
   });
 });
 
@@ -111,7 +164,7 @@ describe('provider HTTP surface (offline)', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       status: string;
-      providers: { name: string; available: boolean }[];
+      providers: { name: string; available: boolean; experimental?: boolean }[];
     };
     expect(body.status).toBe('ok');
     expect(body.providers.map((p) => p.name)).toEqual([
@@ -120,6 +173,7 @@ describe('provider HTTP surface (offline)', () => {
       'browser-use',
       'builtin',
     ]);
+    expect(body.providers.find((p) => p.name === 'firecrawl')?.experimental).toBe(true);
   });
 
   it('GET /providers returns the same provider list', async () => {

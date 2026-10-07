@@ -4,7 +4,7 @@ import {
   callFetch,
   readJson,
   tryParseJson,
-} from './http.js';
+} from '../http.js';
 import {
   type CrawlInput,
   type CrawlProvider,
@@ -12,7 +12,7 @@ import {
   type ProviderExtract,
   type ProviderPage,
   type ProviderSettings,
-} from './types.js';
+} from '../types.js';
 
 export const CRAWL4AI_PROVIDER_NAME = 'crawl4ai';
 

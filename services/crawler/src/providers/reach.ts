@@ -528,40 +528,160 @@ export async function fetchTranscript(
 
 const CUE_TIMING = /^(?:\d{1,3}:)?\d{1,2}:\d{2}[.,]\d{1,3}\s*-->/;
 const INLINE_MARKUP = /<[^>]*>/g;
+/** ASS/SSA-style override tags (`{\an8}`, `{\pos(...)}`) that leak into cues. */
+const ASS_OVERRIDE = /\{[^}]*\}/g;
+/** Header metadata lines that follow the `WEBVTT` signature. */
+const VTT_HEADER_META = /^(?:Kind|Language|X-TIMESTAMP-MAP|Region)\s*:/i;
+/** A leftover brace/semicolon line from a partially removed `STYLE` block. */
+const CSS_LEFTOVER = /^[{};]+$/;
+/** Letter/number test used for word-boundary containment checks. */
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/** Count occurrences of a single character (braces when matching CSS blocks). */
+function countChar(value: string, char: string): number {
+  let count = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === char) count += 1;
+  }
+  return count;
+}
+
+/** Whether the next non-blank raw line is a cue timing line (cue-id lookahead). */
+function nextNonBlankIsTiming(lines: string[], from: number): boolean {
+  for (let index = from + 1; index < lines.length; index += 1) {
+    const probe = (lines[index] ?? '').trim();
+    if (!probe) continue;
+    return CUE_TIMING.test(probe);
+  }
+  return false;
+}
+
+/** Word-boundary substring test — mirrors how caption windows repeat text. */
+function isWordContained(needle: string, haystack: string): boolean {
+  if (!needle || needle.length > haystack.length) return false;
+  if (needle === haystack) return true;
+  let from = 0;
+  while (from <= haystack.length - needle.length) {
+    const index = haystack.indexOf(needle, from);
+    if (index === -1) return false;
+    const startsAtBoundary = index === 0 || !WORD_CHAR.test(haystack[index - 1] ?? '');
+    const end = index + needle.length;
+    const endsAtBoundary = end === haystack.length || !WORD_CHAR.test(haystack[end] ?? '');
+    if (startsAtBoundary && endsAtBoundary) return true;
+    from = index + 1;
+  }
+  return false;
+}
+
+/**
+ * Drop the rolling repeats auto-generated captions emit: the same line shown in
+ * two or three consecutive cues, and the "grows by one word" pattern where an
+ * earlier line reappears as part of the next one. Containment only ever removes
+ * text already present, so no spoken word is lost.
+ */
+function dedupeRollingLines(lines: string[]): string[] {
+  const out: string[] = [];
+  for (const line of lines) {
+    const previous = out[out.length - 1];
+    if (previous === undefined) {
+      out.push(line);
+      continue;
+    }
+    if (line === previous) continue; // identical cue repeated verbatim
+    if (isWordContained(previous, line)) {
+      out[out.length - 1] = line; // the older line repeats inside the newer one
+      continue;
+    }
+    if (isWordContained(line, previous)) continue; // trailing repeat of the same words
+    out.push(line);
+  }
+  return out;
+}
 
 /**
  * Reduce a WebVTT (or SRT / YouTube `srv*`) subtitle document to plain prose:
- * no `WEBVTT` header, no cue timings/settings, no markup and no repeated
- * lines. Pure and offline; exported for tests.
+ * the `WEBVTT` signature and header metadata, `NOTE` blocks, the whole `STYLE`
+ * block and any stray `::cue(...)` CSS, cue timings/settings/identifiers,
+ * inline `<...>` / `{\...}` markup, HTML entities and the rolling repeats of
+ * auto-captions are all removed. Pure and offline; exported for tests and never
+ * throws — nonsense input collapses to `''`.
  */
 export function stripVtt(vtt: string): string {
   if (typeof vtt !== 'string' || !vtt.trim()) return '';
 
-  const normalized = vtt
-    .replace(/^\uFEFF/, '')
-    .replace(/\r\n?/g, '\n')
-    // srv1/srv3 XML cues: "</text>"/"</p>" separate lines of prose.
-    .replace(/<\/(?:text|p)>/gi, '\n');
+  try {
+    const normalized = vtt
+      .replace(/^\uFEFF/, '')
+      .replace(/\r\n?/g, '\n')
+      // srv1/srv3 XML cues: "</text>"/"</p>" separate lines of prose.
+      .replace(/<\/(?:text|p)>/gi, '\n');
 
-  const seen = new Set<string>();
-  const out: string[] = [];
+    const rawLines = normalized.split('\n');
+    const lines: string[] = [];
+    let inNote = false;
+    let inStyle = false;
+    let braceDepth = 0;
 
-  for (const rawLine of normalized.split('\n')) {
-    const line = decodeEntities(rawLine.replace(INLINE_MARKUP, ' '))
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!line) continue;
-    if (/^WEBVTT\b/i.test(line)) continue;
-    if (/^(?:NOTE|STYLE|REGION)\b/i.test(line)) continue;
-    if (/^(?:Kind|Language|X-TIMESTAMP-MAP)\s*:/i.test(line)) continue;
-    if (CUE_TIMING.test(line)) continue;
-    if (/^\d+$/.test(line)) continue; // SRT cue index
-    if (seen.has(line)) continue;
-    seen.add(line);
-    out.push(line);
+    for (let index = 0; index < rawLines.length; index += 1) {
+      const trimmed = (rawLines[index] ?? '').trim();
+
+      // A blank line closes a NOTE block (STYLE blocks close on their brace).
+      if (!trimmed) {
+        if (inNote) inNote = false;
+        continue;
+      }
+      if (inNote) continue;
+
+      // Inside a STYLE block: swallow everything up to the matching `}`.
+      if (inStyle) {
+        braceDepth += countChar(trimmed, '{') - countChar(trimmed, '}');
+        if (braceDepth <= 0) {
+          inStyle = false;
+          braceDepth = 0;
+        }
+        continue;
+      }
+
+      if (/^NOTE\b/i.test(trimmed)) {
+        // "NOTE text" is a one-line comment; bare "NOTE" opens a block.
+        if (trimmed.replace(/^NOTE\b/i, '').trim().length === 0) inNote = true;
+        continue;
+      }
+      if (/^STYLE\b/i.test(trimmed)) {
+        // `STYLE` followed by a CSS block — drop the keyword and the whole block.
+        braceDepth = countChar(trimmed, '{') - countChar(trimmed, '}');
+        inStyle = true;
+        continue;
+      }
+      if (/^::cue\b/i.test(trimmed)) {
+        // Stray CSS rules, e.g. `::cue(c.color000000) { color: rgb(0,0,0); }`.
+        braceDepth = countChar(trimmed, '{') - countChar(trimmed, '}');
+        if (braceDepth > 0) inStyle = true;
+        continue;
+      }
+
+      if (/^WEBVTT\b/i.test(trimmed) || VTT_HEADER_META.test(trimmed)) continue;
+      if (/^REGION\b/i.test(trimmed)) continue;
+      if (CUE_TIMING.test(trimmed)) continue;
+      if (CSS_LEFTOVER.test(trimmed)) continue;
+
+      // Strip angle-bracket tags (`<c.color…>`, `</c>`, `<v Speaker>`,
+      // `<00:00:01.000>`) and `{\an8}`-style tags, then decode entities.
+      const text = decodeEntities(trimmed.replace(INLINE_MARKUP, ' ').replace(ASS_OVERRIDE, ' '))
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!text) continue;
+
+      // A bare number directly before a timing line is an SRT/VTT cue id.
+      if (/^\d+$/.test(text) && nextNonBlankIsTiming(rawLines, index)) continue;
+
+      lines.push(text);
+    }
+
+    return dedupeRollingLines(lines).join('\n');
+  } catch {
+    return '';
   }
-
-  return out.join('\n');
 }
 
 // ---------------------------------------------------------------------------
