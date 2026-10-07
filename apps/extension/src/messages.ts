@@ -329,6 +329,69 @@ export interface AgentDoneMessage {
   card?: RichCard;
 }
 
+/* ------------------------------------------------------------------ *
+ * Durable agent runtime — activity log + stop
+ * ------------------------------------------------------------------ */
+
+/** One kind of line in the agent activity log (mirrors `@diggy/agent`'s events). */
+export type AgentActivityKind =
+  | 'step-started'
+  | 'tool'
+  | 'tool-result'
+  | 'awaiting-approval'
+  | 'error'
+  | 'done';
+
+/**
+ * A flat, serialisable view of one `@diggy/agent` activity event. The protocol
+ * stays free of any import from the agent package so content scripts and the
+ * side panel never pull it in just to render a log line.
+ */
+export interface AgentActivityView {
+  kind: AgentActivityKind;
+  runId: string;
+  stepIndex: number;
+  at: string;
+  /** Tool id, for `tool` / `tool-result` / `awaiting-approval`. */
+  tool?: string;
+  /** Tool arguments, for `tool`. */
+  args?: unknown;
+  /** Tool output text, for `tool-result` (already capped). */
+  text?: string;
+  /** Human message, for `error` / `done`. */
+  message?: string;
+  /** Terminal reason, for `done` (a `RunStatus`). */
+  reason?: string;
+}
+
+/**
+ * Background → side panel + content bubble: one line of the agent activity log.
+ *
+ * Mirrored to both surfaces so the panel can show the log and the in-page
+ * bubble can react while a run is alive.
+ */
+export interface AgentActivityMessage {
+  type: 'diggy:agent-activity';
+  activity: AgentActivityView;
+  /** True while a run is in flight; false once it has stopped. */
+  running: boolean;
+  /** The goal of the run this line belongs to (for a header in the log). */
+  goal?: string;
+}
+
+/**
+ * Side panel / bubble → background: abort the active run.
+ *
+ * Safe to send when nothing is running — the background answers `ok: false`
+ * and changes nothing.
+ */
+export interface AgentStopMessage {
+  type: 'diggy:agent-stop';
+  /** Only stop when this run is the active one (omit to stop whatever runs). */
+  runId?: string;
+  reason?: string;
+}
+
 /** Background → content script: a fill plan awaiting confirmation. */
 export interface FillPlanMessage {
   type: 'diggy:fill-plan';
@@ -368,6 +431,8 @@ export type ExtMessage =
   | AgentAskMessage
   | AgentDeltaMessage
   | AgentDoneMessage
+  | AgentActivityMessage
+  | AgentStopMessage
   | FillPlanMessage
   | FillApplyMessage;
 
@@ -401,6 +466,14 @@ export function isAgentDelta(message: unknown): message is AgentDeltaMessage {
 
 export function isAgentDone(message: unknown): message is AgentDoneMessage {
   return isObject(message) && message.type === 'diggy:agent-done';
+}
+
+export function isAgentActivity(message: unknown): message is AgentActivityMessage {
+  return isObject(message) && message.type === 'diggy:agent-activity';
+}
+
+export function isAgentStop(message: unknown): message is AgentStopMessage {
+  return isObject(message) && message.type === 'diggy:agent-stop';
 }
 
 export function isFillPlan(message: unknown): message is FillPlanMessage {

@@ -58,6 +58,16 @@ export interface Settings {
    * A list we cannot parse fails **closed**: see {@link isAvatarDisabledForHost}.
    */
   avatarDisabledSites?: string[];
+  /**
+   * Per-site allow list for the agent **policy layer**.
+   *
+   * The policy package blocks sensitive sites (banks, payment pages, password
+   * managers, health portals) for reading *and* acting. A host listed here is an
+   * explicit user override for those rules, e.g. `chase.com`, `my-bank.example`
+   * or a full URL. Empty by default: with no entries, every sensitive site stays
+   * blocked (the safe default). Entries that are not strings are ignored.
+   */
+  sensitiveSiteAllowlist?: string[];
   /** Push-to-talk shortcut (hold to talk), e.g. "Ctrl+Shift+Space". */
   shortcut: string;
   /** Google OAuth client id (Web application) for Gmail + Calendar. */
@@ -113,6 +123,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // first time the avatar is shown (see `avatarAutoLoad` above).
   avatarAutoLoad: false,
   avatarDisabledSites: [],
+  // The policy layer blocks sensitive sites by default; this list is the only
+  // way to allow one. Empty = nothing allow-listed (the safe default).
+  sensitiveSiteAllowlist: [],
   shortcut: 'Ctrl+Space',
   googleClientId: ENV.VITE_GOOGLE_CLIENT_ID ?? '',
   gmailSession: false,

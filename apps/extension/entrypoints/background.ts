@@ -7,10 +7,12 @@
  *     exponential-backoff reconnect, graceful when no desktop app is running).
  *  3. `chrome.alarms` reminder fallback + `chrome.notifications`.
  */
+import { friendlyError } from '@diggy/core';
 import { BRIDGE_PROTOCOL_VERSION, type Reminder } from '@diggy/shared';
 import { WsBridgeClient } from '../src/bridge/ws-client';
 import {
   isAgentAsk,
+  isAgentStop,
   isBridgeConnect,
   isBridgeDisconnect,
   isContentCall,
@@ -38,7 +40,13 @@ import {
   type NotifyMessage,
   type ScheduleReminderMessage,
 } from '../src/messages';
-import { applyFillToTab, askDiggy } from '../src/agent';
+import { applyFillToTab } from '../src/agent';
+import {
+  hasUnfinishedRun,
+  resumeUnfinishedRun,
+  runGoal,
+  stopActiveRun,
+} from '../src/agent-host';
 import { getReminders, getSettings, updateReminder, watchSettings } from '../src/storage';
 import { getWatches, updateWatch } from '../src/watches';
 import { checkWatch } from '../src/web';
@@ -127,6 +135,12 @@ function handleMessage(
   if (isAgentAsk(message)) {
     void runAsk(message, sender?.tab?.id);
     return Promise.resolve({ ok: true });
+  }
+  if (isAgentStop(message)) {
+    // Abort the run in flight (if any). Safe to send while idle — answers
+    // `ok: false` and leaves every checkpoint untouched.
+    const stopped = stopActiveRun(message.reason);
+    return Promise.resolve({ ok: stopped });
   }
   if (isFillApply(message)) {
     const tabId = sender?.tab?.id;
@@ -315,6 +329,75 @@ async function reinjectIntoOpenTabs(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ *
+ * Agent keepalive — ONLY while a run is in flight
+ * ------------------------------------------------------------------ */
+
+/**
+ * How often the worker pokes an extension API to reset MV3's ~30-second idle
+ * timer while an agent run is running.
+ */
+const KEEPALIVE_MS = 20_000;
+
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Hold the service worker awake **only** while a run is in flight. Started when
+ * a run begins and cleared the moment it settles, so the extension never spins a
+ * permanent ping (the previous behaviour was an idle worker that stays idle).
+ */
+function startKeepalive(): void {
+  if (keepaliveTimer !== null) return;
+  keepaliveTimer = setInterval(() => {
+    void browser.runtime.getPlatformInfo().catch(() => undefined);
+  }, KEEPALIVE_MS);
+}
+
+function stopKeepalive(): void {
+  if (keepaliveTimer === null) return;
+  clearInterval(keepaliveTimer);
+  keepaliveTimer = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Resume a run a dead worker left unfinished
+ * ------------------------------------------------------------------ */
+
+let resumeStarted: Promise<void> | null = null;
+
+/**
+ * Resume any unfinished run **exactly once** per worker lifetime.
+ *
+ * MV3 has no "worker wake" event: the module top-level *is* the wake, and
+ * `onStartup` / `onInstalled` fire separately. The memoised promise makes the
+ * later calls no-ops, so a single checkpoint is never resumed twice.
+ */
+function resumeUnfinishedOnce(): void {
+  if (resumeStarted) return;
+  resumeStarted = (async () => {
+    try {
+      // Nothing to resume → do not touch the keepalive at all.
+      if (!(await hasUnfinishedRun())) return;
+      startKeepalive();
+      try {
+        const outcome = await resumeUnfinishedRun();
+        if (outcome?.text) {
+          const tabId = await activeTabId();
+          if (tabId != null) {
+            void browser.tabs
+              .sendMessage(tabId, { type: 'diggy:agent-done', text: outcome.text, ok: outcome.ok })
+              .catch(() => undefined);
+          }
+        }
+      } finally {
+        stopKeepalive();
+      }
+    } catch {
+      /* resuming is best-effort — never block the worker */
+    }
+  })();
+}
+
+/* ------------------------------------------------------------------ *
  * Agent (voice / push-to-talk brain)
  * ------------------------------------------------------------------ */
 
@@ -380,11 +463,23 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
     return;
   }
 
-  const result = await askDiggy(message.text, {
-    tabId,
-    onDelta: (_chunk, full) => send({ type: 'diggy:agent-delta', text: full }),
-  });
-  send({ type: 'diggy:agent-done', text: result.text, ok: result.ok, spoke: result.spoke });
+  // The brain runs through the durable runtime (`@diggy/agent`, wired in
+  // `agent-host.ts`): every step is checkpointed, a worker death mid-run is
+  // resumed from that checkpoint, and the Groq ⇄ NVIDIA failover from
+  // `brain.ts` is preserved because it *is* the runtime's step function.
+  startKeepalive();
+  try {
+    const outcome = await runGoal(message.text, {
+      tabId,
+      onDelta: (_chunk, full) => send({ type: 'diggy:agent-delta', text: full }),
+    });
+    send({ type: 'diggy:agent-done', text: outcome.text, ok: outcome.ok, spoke: outcome.spoke });
+  } catch (error) {
+    // Raw provider payloads never reach the user — one clear line instead.
+    send({ type: 'diggy:agent-done', text: friendlyError(error), ok: false });
+  } finally {
+    stopKeepalive();
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1046,10 +1141,12 @@ export default defineBackground(() => {
   browser.runtime.onInstalled.addListener(() => {
     void bootstrap();
     void reinjectIntoOpenTabs();
+    resumeUnfinishedOnce();
   });
   browser.runtime.onStartup.addListener(() => {
     void bootstrap();
     void reinjectIntoOpenTabs();
+    resumeUnfinishedOnce();
   });
 
   // Restart the bridge if the URL/token changes.
@@ -1062,4 +1159,7 @@ export default defineBackground(() => {
   });
 
   void bootstrap();
+  // The module top-level IS the MV3 "worker wake": resume an unfinished run once
+  // (memoised, so `onStartup`/`onInstalled` never double-resume it).
+  resumeUnfinishedOnce();
 });

@@ -5,7 +5,15 @@
  * via {@link buildSystemPrompt}. The rules that matter for safety
  * (confirm-before-destructive, never auto-submit) live here, right next to the
  * tool definitions, so the model and the tool descriptions agree.
+ *
+ * {@link buildSystemPrompt} appends the policy package's untrusted-content guard
+ * so the model is told, in the same prompt, that third-party content arrives
+ * inside DATA fences and must never be obeyed.
  */
+// Imported by path, not by name: `@diggy/policy` is not declared in
+// `packages/core/package.json` yet, so a bare specifier would break the
+// extension's typecheck (which pulls this file in through `@diggy/core`).
+import { buildUntrustedGuard } from '../../policy/src/index';
 
 export const DIGGY_SYSTEM_PROMPT = `You are Diggy — a lively, warm animated companion that lives on the user's screen and helps them get things done on the web, on their machine, and in their day.
 
@@ -87,7 +95,7 @@ export function currentTimeContext(now: Date = new Date()): string {
 
 /** Build the system prompt, optionally appending host-specific instructions. */
 export function buildSystemPrompt(extra?: string): string {
-  const base = `${DIGGY_SYSTEM_PROMPT}\n\n${currentTimeContext()}`;
+  const base = `${DIGGY_SYSTEM_PROMPT}\n\n${currentTimeContext()}\n\n${buildUntrustedGuard()}`;
   if (!extra) return base;
   return `${base}\n\n# Context\n${extra.trim()}`;
 }
