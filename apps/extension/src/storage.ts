@@ -121,7 +121,7 @@ export const DEFAULT_SETTINGS: Settings = {
   avatarVisible: true,
   // Lazy by default: the bubble is created hidden and the model is fetched the
   // first time the avatar is shown (see `avatarAutoLoad` above).
-  avatarAutoLoad: false,
+  avatarAutoLoad: true,
   avatarDisabledSites: [],
   // The policy layer blocks sensitive sites by default; this list is the only
   // way to allow one. Empty = nothing allow-listed (the safe default).
