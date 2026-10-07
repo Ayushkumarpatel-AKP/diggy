@@ -176,6 +176,38 @@ async function readTranscript(
   }
 }
 
+/**
+ * Read a page through Jina Reader — the same free service agent-reach's "web"
+ * channel uses.
+ *
+ * A raw extract of LinkedIn, X or any SPA usually comes back as an auth wall or
+ * an empty shell. Jina renders enough of those pages to be genuinely useful.
+ * Returns `undefined` on any failure so the caller keeps what it already had.
+ */
+async function readWithReach(url: string): Promise<{ title?: string; text: string } | undefined> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25_000);
+    try {
+      const response = await fetch(`https://r.jina.ai/${url}`, {
+        signal: controller.signal,
+        headers: { accept: 'text/plain' },
+      });
+      if (!response.ok) return undefined;
+      const raw = (await response.text()).trim();
+      if (!raw) return undefined;
+      const title = /^Title:\s*(.+)$/m.exec(raw)?.[1]?.trim();
+      // Drop Jina's own header block, keep the prose.
+      const body = raw.replace(/^(Title|URL Source|Published Time|Markdown Content):.*$/gm, '').trim();
+      return { title, text: body.slice(0, 20_000) };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 export class PlatformToolContext implements ToolContext {
   private readonly options: PlatformContextOptions;
   private cards: RichCard[] = [];
@@ -214,6 +246,17 @@ export class PlatformToolContext implements ToolContext {
       }
 
       const page = await extractRemote(target);
+      // Some sites (LinkedIn, X, many SPAs) answer a plain fetch with an auth
+      // wall or an empty shell. When the readable text is thin, ask the crawler
+      // for its Jina-reader rendering before giving up — it survives far more of
+      // those pages than a raw extract does.
+      if (page.text.trim().length < 400) {
+        const richer = await readWithReach(target);
+        if (richer && richer.text.trim().length > page.text.trim().length) {
+          this.pushCard(linkCard(richer.title ?? page.title, page.url, 'Page read by Diggy'));
+          return { url: page.url, title: richer.title ?? page.title, text: richer.text };
+        }
+      }
       this.pushCard(linkCard(page.title, page.url, 'Page read by Diggy'));
       return { url: page.url, title: page.title, text: page.text };
     }

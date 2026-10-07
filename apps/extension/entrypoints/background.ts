@@ -381,7 +381,11 @@ async function transcribe(base64: string, mime: string): Promise<string> {
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`Transcription failed (${response.status}) ${detail.slice(0, 120)}`);
+    // A 400 from Whisper nearly always means the clip was empty or too short
+    // (the key was tapped rather than held). Say that in plain words instead of
+    // leaking the provider's payload at the user.
+    if (response.status === 400) throw new Error(STRINGS.voice.noAudio);
+    throw new Error(STRINGS.voice.transcriptionFailed(response.status, detail));
   }
   const payload = (await response.json()) as { text?: string };
   return (payload.text ?? '').trim();
@@ -418,7 +422,11 @@ async function finishVoice(tabId?: number): Promise<{ ok: boolean; text?: string
     | { ok?: boolean; base64?: string; mime?: string; error?: string }
     | undefined;
   if (!recorded?.ok || !recorded.base64) {
-    return { ok: false, error: recorded?.error ?? 'No audio captured — try holding the key a little longer.' };
+    return { ok: false, error: recorded?.error ?? STRINGS.voice.noAudio };
+  }
+  // Do not spend a network round-trip (and a confusing 400) on an empty clip.
+  if (recorded.base64.length < 2_000) {
+    return { ok: false, error: STRINGS.voice.noAudio };
   }
   try {
     const text = await transcribe(recorded.base64, recorded.mime ?? 'audio/webm');
