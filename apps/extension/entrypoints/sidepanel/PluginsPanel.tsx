@@ -17,7 +17,14 @@
  * The coordinator wires this into `App.tsx`; this module must not import it.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { SketchBadge, SketchButton, SketchCard, ThinkingDots } from '@diggy/ui';
+import {
+  GoogleIcon,
+  providerIcon,
+  SketchBadge,
+  SketchButton,
+  SketchCard,
+  ThinkingDots,
+} from '@diggy/ui';
 import {
   apiBase,
   apiHealth,
@@ -38,6 +45,35 @@ import {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/* ------------------------------------------------------------------ *
+ * Brand marks
+ * ------------------------------------------------------------------ */
+
+/**
+ * The brand mark for one plugin. `providerIcon()` returns a local inline-SVG
+ * component, so nothing is fetched — the extension CSP forbids remote images and
+ * this keeps the gallery working offline.
+ *
+ * The mark sits in a fixed 24px box so an unresolved id can never shift the row
+ * height. Ids this build does not know (an older backend sent emoji) fall back to
+ * the glyph it sent, or a generic plug when there is nothing at all.
+ */
+function PluginMark({ id }: { id?: string }): JSX.Element {
+  const Mark = id ? providerIcon(id) : undefined;
+  const glyph = id && id.length > 0 && id.length <= 4 ? id : '🔌';
+  return (
+    <span aria-hidden="true" className="grid h-6 w-6 shrink-0 place-items-center">
+      {Mark ? (
+        <Mark size={20} />
+      ) : (
+        <span className="grid h-6 w-6 place-items-center rounded-sm bg-paper-200 text-xs">
+          {glyph}
+        </span>
+      )}
+    </span>
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -101,31 +137,12 @@ function PluginRow({
   onConnect: () => void;
   onDisconnect: () => void;
 }): JSX.Element {
-  const [iconBroken, setIconBroken] = useState(false);
-
   return (
     <SketchCard tone="paper" accent={plugin.connected ? 'green' : 'sky'} padded={false} className="space-y-2 p-2.5">
       <div className="flex items-start gap-2">
-        {plugin.icon && !iconBroken ? (
-          <img
-            src={plugin.icon}
-            alt=""
-            width={24}
-            height={24}
-            className="h-6 w-6 shrink-0 rounded-sm object-contain"
-            onError={() => setIconBroken(true)}
-          />
-        ) : (
-          <span
-            aria-hidden="true"
-            className="grid h-6 w-6 shrink-0 place-items-center rounded-sm bg-paper-200 text-xs"
-          >
-            🔌
-          </span>
-        )}
-
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
+            <PluginMark id={plugin.icon} />
             <span className="truncate font-sketch text-sm font-semibold text-ink" title={plugin.name}>
               {plugin.name}
             </span>
@@ -393,6 +410,7 @@ export function PluginsPanel({ onClose }: { onClose: () => void }): JSX.Element 
                 variant="accent"
                 accent="sky"
                 loading={signingIn}
+                iconLeft={<GoogleIcon size={18} className="shrink-0" />}
                 className="whitespace-nowrap"
                 onClick={() => void handleSignIn()}
               >

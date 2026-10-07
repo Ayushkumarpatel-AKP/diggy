@@ -83,3 +83,6 @@ export type { ThinkingDotsProps, ThinkingDotsSize } from './components/ThinkingD
 
 export { InkBackground } from './components/InkBackground';
 export type { InkBackgroundProps } from './components/InkBackground';
+
+/* --- Brand marks ---------------------------------------------------- */
+export * from './icons/index.js';
