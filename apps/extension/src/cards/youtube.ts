@@ -386,7 +386,7 @@ const FILLER =
  * survives; only a number with am/pm, a "baje" clock, or a day word is dropped.
  */
 const WHEN =
-  /\b\d{1,2}([.:]\d{2})?\s*(am|pm|a\.m|p\.m)\b|\b\d{1,2}\s*(baje|o'?clock)\b|\b(today|tonight|tomorrow|morning|evening|night|kal|aaj|shaam|subah)\b/gi;
+  /\b\d{1,2}([.:]\s?\d{2})?\s*(am|pm|a\.m|p\.m)\b|\b\d{1,2}\s+\d{2}\s*(am|pm)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(baje|o'?clock)\b|\b(today|tonight|tomorrow|morning|evening|night|kal|aaj|shaam|subah)\b/gi;
 
 export function parseVideoRequest(text: string): string | undefined {
   const source = (text ?? '').trim();

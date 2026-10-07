@@ -208,6 +208,41 @@ async function readWithReach(url: string): Promise<{ title?: string; text: strin
   }
 }
 
+/**
+ * Sites whose real content only exists inside the user's own session.
+ *
+ * An anonymous fetch of any of these hits a login wall, so they are read through
+ * the browser the user is already signed into instead.
+ */
+const SESSION_SITES =
+  /(^|\.)(linkedin\.com|mail\.google\.com|x\.com|twitter\.com|reddit\.com|instagram\.com|facebook\.com|notion\.so|web\.whatsapp\.com|web\.telegram\.org|github\.com)$/i;
+
+/**
+ * Read a URL the user is signed into, from their own tab.
+ *
+ * Returns `undefined` for anything that is not a session site, or when the tab
+ * read fails, so callers fall back to the anonymous path.
+ */
+async function readFromUserSession(
+  url: string,
+): Promise<{ title: string; text: string } | undefined> {
+  try {
+    if (!SESSION_SITES.test(new URL(url).hostname)) return undefined;
+  } catch {
+    return undefined;
+  }
+  try {
+    const response = (await browser.runtime.sendMessage({ type: 'diggy:read-tab', url })) as
+      | { ok?: boolean; title?: string; text?: string }
+      | undefined;
+    const text = response?.text?.trim();
+    if (!response?.ok || !text) return undefined;
+    return { title: response.title?.trim() || url, text };
+  } catch {
+    return undefined;
+  }
+}
+
 export class PlatformToolContext implements ToolContext {
   private readonly options: PlatformContextOptions;
   private cards: RichCard[] = [];
@@ -236,9 +271,15 @@ export class PlatformToolContext implements ToolContext {
     if (params.url && params.url.trim()) {
       const target = params.url.trim();
 
-      // A video link is useless as prose. Fetch the transcript instead so the
-      // model can summarise what was actually said, and fall through to the
-      // normal read when there is no transcript to be had.
+      // 1. A site the user is signed into (LinkedIn, Gmail, X…): read their own
+      //    tab, because the anonymous fetch would only see a login page.
+      const session = await readFromUserSession(target);
+      if (session) {
+        this.pushCard(linkCard(session.title, target, 'Read from your signed-in tab'));
+        return { url: target, title: session.title, text: session.text };
+      }
+
+      // 2. A video: fetch its transcript, not its HTML.
       const transcript = await readTranscript(target);
       if (transcript) {
         this.pushCard(linkCard(transcript.title ?? target, target, 'Transcript read by Diggy'));

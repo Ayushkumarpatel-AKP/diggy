@@ -145,6 +145,18 @@ export interface OpenUrlMessage {
   url: string;
 }
 
+/**
+ * Read a URL from the user's OWN signed-in tab.
+ *
+ * LinkedIn, Gmail and friends show a login wall to an anonymous fetch but real
+ * content to the tab the user is already signed into, so those have to be read
+ * through the browser the user is using.
+ */
+export interface ReadTabMessage {
+  type: 'diggy:read-tab';
+  url: string;
+}
+
 /** Background → everyone: a `BridgeEvent` arrived from the desktop companion. */
 export interface BridgeEventMessage {
   type: 'diggy:bridge-event';
@@ -216,6 +228,7 @@ export type ExtMessage =
   | RecStopMessage
   | RecWarmMessage
   | OpenUrlMessage
+  | ReadTabMessage
   | AgentHeardMessage
   | BridgeEventMessage
   | ScheduleReminderMessage
@@ -296,6 +309,10 @@ export function isRecWarm(message: unknown): message is RecWarmMessage {
 
 export function isOpenUrl(message: unknown): message is OpenUrlMessage {
   return isObject(message) && message.type === 'diggy:open-url' && typeof message.url === 'string';
+}
+
+export function isReadTab(message: unknown): message is ReadTabMessage {
+  return isObject(message) && message.type === 'diggy:read-tab' && typeof message.url === 'string';
 }
 
 export function isAgentHeard(message: unknown): message is AgentHeardMessage {

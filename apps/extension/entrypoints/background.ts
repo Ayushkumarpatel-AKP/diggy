@@ -17,6 +17,7 @@ import {
   isFillApply,
   isGoogleCheck,
   isOpenUrl,
+  isReadTab,
   isRecStart,
   isRecStop,
   isRecWarm,
@@ -155,6 +156,9 @@ function handleMessage(
       }
     })();
   }
+  if (isReadTab(message)) {
+    return readTabForUser(message.url);
+  }
   if (isOpenUrl(message)) {
     // Opening from the background is reliable — a content script's window.open
     // is often blocked by the page.
@@ -206,6 +210,45 @@ function handleMessage(
  * script into tabs that are already loaded — so the bot would stay gone until a
  * manual page refresh. This injects it back.
  */
+/**
+ * Read a URL through the user's own browser session.
+ *
+ * Uses a tab the user already has open on that site; otherwise it opens one in
+ * the background, waits for it to settle, reads it with the content script, and
+ * closes it again. This is what makes "what messages came on LinkedIn" work —
+ * an anonymous fetch only ever reaches the login page.
+ */
+async function readTabForUser(url: string): Promise<{ ok: boolean; title?: string; text?: string }> {
+  let created: number | undefined;
+  try {
+    const origin = new URL(url).origin;
+    const existing = await browser.tabs.query({ url: `${origin}/*` });
+    let tabId = existing.find((tab) => tab.id != null)?.id;
+    if (tabId == null) {
+      const tab = await browser.tabs.create({ url, active: false });
+      tabId = tab.id ?? undefined;
+      created = tabId;
+      // Let the page (and its app JS) finish before we read the DOM.
+      await new Promise((resolve) => setTimeout(resolve, 7000));
+    }
+    if (tabId == null) return { ok: false };
+
+    const response = (await browser.tabs.sendMessage(tabId, {
+      type: 'diggy:content-exec',
+      method: 'readPage',
+      params: { includeFields: false },
+    })) as { result?: { title?: string; text?: string } } | undefined;
+
+    const result = response?.result;
+    if (!result?.text?.trim()) return { ok: false };
+    return { ok: true, title: result.title, text: result.text };
+  } catch {
+    return { ok: false };
+  } finally {
+    if (created != null) await browser.tabs.remove(created).catch(() => undefined);
+  }
+}
+
 async function reinjectIntoOpenTabs(): Promise<void> {
   try {
     const tabs = await browser.tabs.query({ url: ['http://*/*', 'https://*/*'] });
