@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildServer } from '../src/server.js';
+import { inject } from './helpers.js';
 import {
   decodeDuckDuckGoUrl,
   isNetworkDisabled,
@@ -109,7 +110,7 @@ describe('GET /search (offline)', () => {
   });
 
   it('returns an offline, empty result set without hitting the network', async () => {
-    const response = await app.inject({ method: 'GET', url: '/search?q=diggy' });
+    const response = await inject(app, { method: 'GET', url: '/search?q=diggy' });
     expect(response.statusCode).toBe(200);
     const body = response.json() as { query: string; results: unknown[]; offline: boolean };
     expect(body.query).toBe('diggy');
@@ -118,7 +119,7 @@ describe('GET /search (offline)', () => {
   });
 
   it('rejects a request without a query', async () => {
-    const response = await app.inject({ method: 'GET', url: '/search' });
+    const response = await inject(app, { method: 'GET', url: '/search' });
     expect(response.statusCode).toBe(400);
   });
 });

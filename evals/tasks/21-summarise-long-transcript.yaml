@@ -1,0 +1,10 @@
+id: summarise-long-transcript
+prompt: "Summarise this talk transcript in two sentences."
+fixture: long-transcript
+expect:
+  - tool_called: readPage
+  - text_contains: async closures
+  - text_max_chars: 320
+  - policy_decision: allowed
+weight: 2
+notes: "The transcript must be summarised, not pasted. text_max_chars catches an echo."

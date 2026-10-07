@@ -8,6 +8,30 @@ export { toMarkdown } from './markdown.js';
 export type { MarkdownInput } from './markdown.js';
 
 export {
+  BlockedUrlError,
+  MAX_REDIRECTS,
+  MAX_RESPONSE_BYTES,
+  TOTAL_TIMEOUT_MS,
+  checkUrl,
+  isBlockedIp,
+  isBlockedIpv4,
+  isBlockedIpv6,
+  safeFetchText,
+} from './ssrf.js';
+export type { SafeFetchOptions, SafeFetchResult, UrlCheck } from './ssrf.js';
+
+export {
+  JINA_ENV,
+  isJinaEligible,
+  isJinaEnabled,
+  isPrivateHostname,
+  isSensitiveParam,
+  loadOwnedSites,
+  ownedSitesPath,
+} from './jina.js';
+export type { JinaCheck, JinaCheckOptions } from './jina.js';
+
+export {
   DEFAULT_USER_AGENT,
   HostRateLimiter,
   getCrawlDelayMs,

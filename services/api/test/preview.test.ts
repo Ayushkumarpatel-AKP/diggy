@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { createContext } from '../src/config.js';
 import { parseMeta, parseYouTubeFeed } from '../src/routes/preview.js';
 import { buildServer } from '../src/server.js';
+import { inject } from './helpers.js';
 
 const CHANNEL_ID = 'UC_x5XG1OV2P6uZZ5FSM9Ttw';
 const VIDEO_ID = 'dQw4w9WgXcQ';
@@ -79,7 +80,7 @@ describe('preview routes', () => {
   });
 
   it('derives the favicon URL from a page URL', async () => {
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: '/favicon?url=https%3A%2F%2Fnews.ycombinator.com%2Fitem%3Fid%3D1',
     });
@@ -90,12 +91,12 @@ describe('preview routes', () => {
   });
 
   it('rejects a request without a url', async () => {
-    const response = await app.inject({ method: 'GET', url: '/favicon' });
+    const response = await inject(app, { method: 'GET', url: '/favicon' });
     expect(response.statusCode).toBe(400);
   });
 
   it('parses /meta from an inline HTML fixture (no network)', async () => {
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: `/meta?url=${encodeURIComponent('https://example.com/post/1')}&html=${encodeURIComponent(HTML_FIXTURE)}`,
     });

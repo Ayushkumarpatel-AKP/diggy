@@ -1,4 +1,4 @@
-import { asRecord, asString, callFetch, readJson } from './http.js';
+import { asRecord, asString, callFetch, readJson } from '../http.js';
 import {
   type CrawlInput,
   type CrawlProvider,
@@ -6,7 +6,7 @@ import {
   type ProviderExtract,
   type ProviderPage,
   type ProviderSettings,
-} from './types.js';
+} from '../types.js';
 
 export const BROWSER_USE_PROVIDER_NAME = 'browser-use';
 

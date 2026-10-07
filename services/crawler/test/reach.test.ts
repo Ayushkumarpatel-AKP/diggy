@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildServer } from '../src/server.js';
+import { inject } from './helpers.js';
 import { listAllProviders, listProviders } from '../src/providers/index.js';
 import {
   fetchFeed,
@@ -88,8 +89,67 @@ welcome to <00:00:03.000><c>Diggy</c>
 welcome to Diggy
 3
 
-00:00:06.000 --> 00:00:08.000
+ 00:00:06.000 --> 00:00:08.000
 This is a new line.`;
+
+// A realistic YouTube *auto-captions* capture: `WEBVTT` signature, a
+// `Kind:`/`Language:` metadata block, a full `STYLE` block whose `::cue(...)`
+// rules leak CSS into the text, cue timing lines with settings, `<c.color…>`
+// / `<v …>` / `<00:00…>` / `{\an8}` inline markup and the rolling repeats that
+// make a sentence appear in two or three consecutive cues.
+const AUTO_VTT_SAMPLE = `WEBVTT
+Kind: captions
+Language: en
+
+STYLE
+::cue {
+  background-image: linear-gradient(to bottom, rgba(0,0,0,0.9), rgba(0,0,0,0));
+  color: #fff;
+}
+::cue(c.color000000) { color: rgb(0,0,0);
+}
+::cue(c.color00BCE7) { color: rgb(0,188,231);
+}
+::cue(c.color1367F9) { color: rgb(19,103,249);
+}
+
+00:00:00.000 --> 00:00:02.000 align:start position:0%
+<c.color00BCE7>The quick brown fox</c>
+
+00:00:02.000 --> 00:00:04.000 align:start position:0%
+The quick brown fox
+
+00:00:04.000 --> 00:00:06.000 align:start position:0%
+The quick brown fox jumps over the lazy dog
+
+00:00:06.000 --> 00:00:08.000 align:start position:0%
+<c.color1367F9>jumps over the lazy dog</c>
+And then it ran away &amp; hid.
+
+00:00:08.000 --> 00:00:10.000 align:start position:0%
+<v Narrator><00:00:09.000>{\\an8}Stay tuned for more.</v>`;
+
+// A plain WebVTT file with no styling at all — the text must round-trip.
+const PLAIN_VTT_SAMPLE = `WEBVTT
+
+00:00:00.000 --> 00:00:02.000
+Good morning everyone.
+
+00:00:02.000 --> 00:00:04.000
+Today we build something small.`;
+
+/** Number of non-overlapping occurrences of `needle` in `haystack`. */
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const index = haystack.indexOf(needle, from);
+    if (index === -1) return count;
+    count += 1;
+    from = index + needle.length;
+  }
+}
 
 describe('parseDoctorOutput', () => {
   it('extracts the channel map from a realistic doctor report', () => {
@@ -210,6 +270,56 @@ describe('stripVtt', () => {
   });
 });
 
+describe('stripVtt (YouTube auto-captions)', () => {
+  const text = stripVtt(AUTO_VTT_SAMPLE);
+
+  it('removes the WEBVTT header, metadata, STYLE block and ::cue CSS', () => {
+    for (const forbidden of ['WEBVTT', 'STYLE', '::cue', '-->', 'rgb(', '<c.', '{\\an']) {
+      expect(text).not.toContain(forbidden);
+    }
+    expect(text).not.toContain('Kind:');
+    expect(text).not.toContain('Language:');
+    expect(text).not.toContain('background-image');
+  });
+
+  it('keeps each spoken sentence exactly once (rolling repeats collapsed)', () => {
+    expect(countOccurrences(text, 'The quick brown fox')).toBe(1);
+    expect(countOccurrences(text, 'jumps over the lazy dog')).toBe(1);
+    expect(countOccurrences(text, 'Stay tuned for more.')).toBe(1);
+  });
+
+  it('decodes entities and preserves the spoken prose', () => {
+    expect(text).toContain('And then it ran away & hid.');
+    expect(text).toContain('The quick brown fox jumps over the lazy dog');
+    expect(text).toContain('Stay tuned for more.');
+    expect(text).not.toContain('&amp;');
+    expect(text).toBe(
+      'The quick brown fox jumps over the lazy dog\n' +
+        'And then it ran away & hid.\n' +
+        'Stay tuned for more.',
+    );
+  });
+
+  it('round-trips a plain vtt with no styling', () => {
+    expect(stripVtt(PLAIN_VTT_SAMPLE)).toBe(
+      'Good morning everyone.\nToday we build something small.',
+    );
+  });
+
+  it('returns "" for a header/style-only document and never throws', () => {
+    expect(stripVtt(['WEBVTT', '', 'STYLE', '::cue { color: red; }'].join('\n'))).toBe('');
+  });
+
+  it('returns "" for empty, null-ish and junk input without throwing', () => {
+    for (const junk of ['', '   \n\t  ', 'WEBVTT', 'STYLE\n::cue(c.color000000) { color: rgb(0,0,0); }']) {
+      expect(stripVtt(junk)).toBe('');
+    }
+    for (const junk of [undefined, null, 42, {}, [], true]) {
+      expect(stripVtt(junk as unknown as string)).toBe('');
+    }
+  });
+});
+
 describe('reach helpers respect the offline guard', () => {
   it('never touches the network or throws while offline', async () => {
     await expect(probeReach()).resolves.toMatchObject({ available: false });
@@ -243,7 +353,7 @@ describe('reach HTTP surface (offline)', () => {
   });
 
   it('GET /providers keeps the provider list and adds a reach summary', async () => {
-    const response = await app.inject({ method: 'GET', url: '/providers' });
+    const response = await inject(app, { method: 'GET', url: '/providers' });
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       providers: { name: string; available: boolean }[];
@@ -255,18 +365,18 @@ describe('reach HTTP surface (offline)', () => {
   });
 
   it('GET /reach returns the probe result', async () => {
-    const response = await app.inject({ method: 'GET', url: '/reach' });
+    const response = await inject(app, { method: 'GET', url: '/reach' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ available: false });
   });
 
   it('GET /transcript validates the url and honours the offline guard', async () => {
-    const missing = await app.inject({ method: 'GET', url: '/transcript' });
+    const missing = await inject(app, { method: 'GET', url: '/transcript' });
     expect(missing.statusCode).toBe(400);
-    const invalid = await app.inject({ method: 'GET', url: '/transcript?url=not-a-url' });
+    const invalid = await inject(app, { method: 'GET', url: '/transcript?url=not-a-url' });
     expect(invalid.statusCode).toBe(400);
 
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: '/transcript?url=https%3A%2F%2Fyoutu.be%2FdQw4w9WgXcQ&lang=en',
     });
@@ -275,13 +385,13 @@ describe('reach HTTP surface (offline)', () => {
   });
 
   it('GET /feed validates params and honours the offline guard', async () => {
-    expect((await app.inject({ method: 'GET', url: '/feed' })).statusCode).toBe(400);
+    expect((await inject(app, { method: 'GET', url: '/feed' })).statusCode).toBe(400);
     expect(
-      (await app.inject({ method: 'GET', url: '/feed?url=https://example.com/feed.xml&max=abc' }))
+      (await inject(app, { method: 'GET', url: '/feed?url=https://example.com/feed.xml&max=abc' }))
         .statusCode,
     ).toBe(400);
 
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: '/feed?url=https%3A%2F%2Fexample.com%2Ffeed.xml&max=5',
     });

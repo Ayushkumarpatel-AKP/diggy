@@ -1,0 +1,64 @@
+name: CI
+
+# Every branch push, plus pull requests into main.
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+# Only the newest run for a given ref matters — cancel anything superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: typecheck · test · build
+    runs-on: ubuntu-latest
+    env:
+      # Keep this NON-production on purpose. pnpm (like npm) skips devDependencies
+      # when NODE_ENV=production, and this repo's whole toolchain — turbo, typescript,
+      # vitest, wxt — lives in devDependencies. A production NODE_ENV breaks the shells.
+      NODE_ENV: development
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned to the root package.json "packageManager": "pnpm@9.15.9".
+      # Keep this in sync if the workspace bumps pnpm.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      # Node 22 matches the workspace's @types/node (^22.10.1) and the 20.19+/22+
+      # engines pulled in by the tooling. pnpm cache is wired up here.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same exclusions the team uses locally: skip the desktop shell and the bridge.
+      - name: Typecheck
+        run: pnpm run typecheck -- --filter=!@diggy/bridge
+
+      - name: Test
+        run: pnpm run test -- --filter=!@diggy/bridge
+
+      - name: Build extension
+        run: pnpm --filter @diggy/extension build
+
+      - name: Upload extension build
+        uses: actions/upload-artifact@v4
+        with:
+          name: diggy-extension-chrome-mv3
+          path: apps/extension/.output/chrome-mv3
+          if-no-files-found: error

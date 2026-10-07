@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Diggy E2E Fixture — Conference talk transcript</title>
+  </head>
+  <body>
+    <h1>Talk transcript — “Shipping Rust 1.85 in production”</h1>
+    <p>
+      [00:00] Welcome, everyone. Today I want to walk through what Rust 1.85 changed for us and how we
+      rolled it out to a service that serves about two hundred thousand requests a minute. Nothing
+      here is exotic; it is a practical migration story with the sharp edges left in.
+    </p>
+    <p>
+      [01:10] First, the headline feature: async closures are stable in Rust 1.85. For years we wrote
+      closures that returned futures by hand, boxing them and paying an allocation on every call.
+      Async closures let the compiler infer the future type, so a closure that captures a reference
+      and returns a future now compiles without the boxing dance. The ergonomics win is real, and the
+      codegen is honestly better than our hand-rolled version.
+    </p>
+    <p>
+      [03:40] Second, the Rust 2024 edition. We enabled it crate by crate. The migration was mostly
+      mechanical — the edition guide handled the bulk — but two things bit us. The new `gen` keyword
+      collided with a module name, and one unsafe block needed the new `unsafe_op_in_unsafe_fn`
+      reasoning. Both were five-minute fixes once the compiler pointed at them.
+    </p>
+    <p>
+      [06:25] Third, toolchain hygiene. We pinned the minimum supported Rust version to 1.82 for the
+      build, even though 1.85 is what we compile with, so downstream consumers are not forced forward.
+      The `rustup update stable` path is what most people will run, and it just works.
+    </p>
+    <p>
+      [08:05] Then we get to the migration itself. We ran the new toolchain in CI on a branch for two
+      weeks before cutting over. The only regression was a timing-sensitive test that we had been
+      getting away with; the new async closures changed the scheduling enough to expose it. We fixed
+      the test, not the compiler.
+    </p>
+    <p>
+      [11:30] Deployment: we shipped the new binary behind a flag, watched error rates for an hour,
+      then flipped it cluster by cluster. Rollback was a single flag. If you take one thing from this
+      talk, make it that: ship behind a flag you can flip.
+    </p>
+    <p>
+      [14:50] Questions. “Do async closures help with trait bounds?” Sometimes — the inference is
+      better, but you still hit the usual higher-ranked lifetime limits. “Should I migrate now?” If
+      you are on 1.82 or newer, yes; the edition migration is a weekend, not a quarter.
+    </p>
+    <p>
+      [17:20] Thanks for coming. Slides and the migration checklist are in the repo linked on the
+      conference site. Go upgrade, then go take the afternoon off.
+    </p>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "Release 4.0's changelog is enormous, but only one entry matters: the new streaming cache is the headline change. The other 120 items are routine — most users need do nothing, though integrators who override defaults should read the upgrade notes.",
+  "toolCalls": [
+    {
+      "name": "readPage",
+      "args": {}
+    }
+  ]
+}

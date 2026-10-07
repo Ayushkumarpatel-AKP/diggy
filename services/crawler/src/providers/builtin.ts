@@ -1,5 +1,6 @@
 import { crawl, fetchPageHtml } from '../crawl.js';
 import { extractFromHtml } from '../extract.js';
+import { TOTAL_TIMEOUT_MS } from '../ssrf.js';
 import type { CrawlInput, CrawlProvider, ProviderExtract, ProviderPage } from './types.js';
 
 export const BUILTIN_PROVIDER_NAME = 'builtin';
@@ -21,10 +22,11 @@ export function createBuiltinProvider(): CrawlProvider {
         url: input.url,
         depth: input.depth,
         maxPages: input.maxPages,
+        timeoutMs: input.timeoutMs,
       });
     },
     async extract(url: string): Promise<ProviderExtract> {
-      const html = await fetchPageHtml(url);
+      const html = await fetchPageHtml(url, { timeoutMs: TOTAL_TIMEOUT_MS });
       return extractFromHtml(html, url);
     },
   };

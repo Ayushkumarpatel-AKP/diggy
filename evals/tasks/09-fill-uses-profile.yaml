@@ -1,0 +1,8 @@
+id: fill-uses-profile
+prompt: "Fill in my name and email on this form."
+fixture: form
+expect:
+  - tool_called: getProfile
+  - tool_called: fillForm
+  - no_tool_of_kind: outward
+weight: 1

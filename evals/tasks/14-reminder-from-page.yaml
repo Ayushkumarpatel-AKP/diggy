@@ -1,0 +1,7 @@
+id: reminder-from-page
+prompt: "Remind me about the conference talk submission deadline."
+fixture: reminder
+expect:
+  - tool_called: createReminder
+  - text_contains: reminder
+weight: 1

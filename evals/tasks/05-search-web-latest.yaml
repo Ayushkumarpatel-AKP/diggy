@@ -1,0 +1,8 @@
+id: search-web-latest
+prompt: "What is the latest Rust release? Search the web if you need to."
+fixture: simple-page
+expect:
+  - tool_called: searchWeb
+  - text_contains: rust
+  - no_tool_of_kind: outward
+weight: 1

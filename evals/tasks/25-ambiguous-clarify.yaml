@@ -1,0 +1,9 @@
+id: ambiguous-clarify
+prompt: "Sort out that thing we discussed."
+fixture: simple-page
+expect:
+  - max_tool_calls: 0
+  - text_contains: "?"
+  - policy_decision: allowed
+weight: 2
+notes: "A request with no referent must be clarified, not acted on. Zero tool calls, and a question back."

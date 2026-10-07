@@ -21,8 +21,96 @@ import type { Bounds } from './framing.js';
 /** Where `.vrma` clips are looked up by default (served from the host's static dir). */
 export const DEFAULT_VRMA_DIR = '/animations';
 
+/**
+ * Default frame-rate cap.
+ *
+ * A VRM loop running in *every* tab is the single biggest cost this product
+ * imposes on a machine, so the default is deliberately conservative: 30 fps is
+ * smooth enough for a small corner avatar and roughly halves the per-tab cost
+ * of the renderer (the loop is capped, so a capped-out frame does no update,
+ * no adaptive-framing pass and no sparkle simulation). Hosts that care about
+ * smoothness more than power — the demo/gallery — ask for 60 explicitly.
+ */
+export const DEFAULT_FPS = 30;
+
+/** How long a hidden tab may keep its GPU resources before we release them. */
+const HIDDEN_GPU_RELEASE_MS = 60_000;
+
+/**
+ * A one-second rolling sample of the render loop.
+ *
+ * Published to `window.__diggyPerf` (dev only) so the before/after cost of a
+ * change can be compared by hand in DevTools. Not part of the public engine
+ * API — treat it as a debug readout.
+ */
+export interface AvatarEnginePerf {
+  /** Frames actually rendered during the last completed one-second window. */
+  frames: number;
+  /** Mean wall-clock milliseconds spent producing each rendered frame. */
+  avgFrameMs: number;
+  /** Estimated CPU occupancy (0..100) over that window: busy time ÷ wall time. */
+  cpuPercent: number;
+  /** Measured render rate over that window (== `frames`). */
+  fps: number;
+  /** The cap the engine is running at. */
+  fpsCap: number;
+  /** Epoch ms when the sample was taken. */
+  at: number;
+}
+
+/** The DevTools global the perf sample is published to. */
+interface DiggyPerfGlobal {
+  __diggyPerf?: AvatarEnginePerf;
+  __diggyPerfEnabled?: boolean;
+}
+
+/**
+ * True unless the calling bundle was built for production.
+ *
+ * The read is written as the literal `import.meta.env` so Vite/WXT/esbuild can
+ * statically replace it at build time — routing it through a cast or a local
+ * variable (the obvious "cleaner" version) breaks that replacement and silently
+ * disables the helper, which is exactly the trap this comment is here to stop.
+ */
+function perfDefaultOn(): boolean {
+  try {
+    // @ts-ignore -- Vite injects `import.meta.env`; this package has no vite/client types.
+    const env = import.meta.env as { DEV?: boolean; PROD?: boolean; MODE?: string } | undefined;
+    if (env && typeof env === 'object') {
+      // A production build keeps the dev-only helper off.
+      if (env.PROD === true && env.DEV !== true) return false;
+      return true;
+    }
+    // No bundler env at all (plain ESM, tests): publishing is harmless.
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Publish a perf sample unless the host has turned the helper off.
+ *
+ * `force` is the per-engine `perf` option: `true` always publishes, `false`
+ * never does, `undefined` follows the environment (dev builds, or a host that
+ * set `window.__diggyPerfEnabled = true`). Off by default in production.
+ */
+function publishPerf(sample: AvatarEnginePerf, force: boolean | undefined): void {
+  if (typeof window === 'undefined') return;
+  if (force === false) return;
+  const scope = window as unknown as DiggyPerfGlobal;
+  if (scope.__diggyPerfEnabled === false) return;
+  if (force !== true && scope.__diggyPerfEnabled !== true && !perfDefaultOn()) return;
+  scope.__diggyPerf = sample;
+}
+
 export interface AvatarEngineOptions {
-  /** Target frames-per-second cap. Defaults to `60`. */
+  /**
+   * Target frames-per-second cap. Defaults to {@link DEFAULT_FPS} (`30`).
+   *
+   * Raised to `60` (or higher) when smoothness matters more than power; the
+   * demo/gallery passes `60` to look as good as it always has.
+   */
   fps?: number;
   /** Max device pixel ratio used for rendering. Defaults to `2`. */
   pixelRatio?: number;
@@ -42,6 +130,12 @@ export interface AvatarEngineOptions {
   side?: 'left' | 'right';
   /** Walk exaggeration multiplier (1 = natural, 0 = no motion). Defaults to `1`. */
   walkIntensity?: number;
+  /**
+   * DEV ONLY. Force the `window.__diggyPerf` readout on (`true`) or off
+   * (`false`). Left unset, the helper publishes only in a development build or
+   * when the host sets `window.__diggyPerfEnabled = true`.
+   */
+  perf?: boolean;
 }
 
 /** Tunables for the procedural walk cycle. */
@@ -258,6 +352,16 @@ export class AvatarEngine {
   private _lastFrameTime = 0;
   private _resizeObserver: ResizeObserver | null = null;
 
+  // Dev perf readout (see `AvatarEnginePerf`). Cheap counters, always kept.
+  private _perfOption: boolean | undefined;
+  private _perfFrames = 0;
+  private _perfBusyMs = 0;
+  private _perfWindowStart = 0;
+  private _perfSample: AvatarEnginePerf | null = null;
+  // Hidden-tab GPU release state.
+  private _gpuReleased = false;
+  private _gpuReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+
   private _disposed = false;
   private _appear = 1;
   private _appearTarget = 1;
@@ -283,12 +387,13 @@ export class AvatarEngine {
 
   constructor(options: AvatarEngineOptions = {}) {
     this._options = options;
-    this._fps = Math.max(1, options.fps ?? 60);
+    this._fps = Math.max(1, options.fps ?? DEFAULT_FPS);
     this._pixelRatio = Math.max(1, options.pixelRatio ?? 2);
     this._side = options.side ?? 'left';
     this._fitFraction = THREE.MathUtils.clamp(options.fitFraction ?? 0.82, 0.05, 1);
     this._anchor = options.anchor ?? { x: 0.5, y: 0.62 };
     this._walkIntensity = Math.max(0, options.walkIntensity ?? 1);
+    this._perfOption = options.perf;
 
     this.scene = new THREE.Scene();
     if (options.background !== null && options.background !== undefined) {
@@ -358,22 +463,33 @@ export class AvatarEngine {
     if (this._renderer) this.unmount();
 
     this._canvas = canvas;
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setClearColor(0x000000, 0);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this._renderer = renderer;
+    this._renderer = this._createRenderer(canvas);
 
     this._resize();
     this._observeResize();
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this._onVisibilityChange);
+      // Don't spin a loop nobody can see: a tab that is already hidden starts
+      // parked and is woken by the next visibilitychange.
+      if (document.hidden) this._scheduleGpuRelease();
+      else this._startLoop();
+    } else {
+      this._startLoop();
     }
-    this._startLoop();
+  }
+
+  /** Build the WebGL renderer for a canvas (shared by `mount` + GPU restore). */
+  private _createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    return renderer;
   }
 
   /** Detach from the canvas, stop the loop and release the renderer. */
   unmount(): void {
     this._stopLoop();
+    this._cancelGpuRelease();
     this._disconnectResize();
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this._onVisibilityChange);
@@ -381,6 +497,7 @@ export class AvatarEngine {
     this._renderer?.dispose();
     this._renderer = null;
     this._canvas = null;
+    this._gpuReleased = false;
   }
 
   /**
@@ -438,28 +555,51 @@ export class AvatarEngine {
     return vrm;
   }
 
-  /** Dispose of everything. Idempotent and safe to call at any time. */
+  /**
+   * Dispose of everything. Idempotent, safe to call at any time, and — like
+   * every other release path here — guaranteed never to throw: a failing
+   * `dispose()` in a React cleanup would take the whole page's effect chain
+   * down with it. Each sub-release is individually guarded so one bad resource
+   * cannot strand the rest.
+   */
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
-    this._talking = false;
-    this._stopLoop();
-    this._disconnectResize();
-    if (typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+    this._cancelGpuRelease();
+    try {
+      this._talking = false;
+      this._stopLoop();
+      this._disconnectResize();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', this._onVisibilityChange);
+      }
+      this._idle.detach();
+      this._expressions.detach();
+      this._lipSync.detach();
+      this._lipSync.dispose();
+      this._mixer?.stopAllAction();
+      this._mixer?.removeEventListener('finished', this._onActionFinished);
+      this._mixer = null;
+      this._vrmaAction = null;
+      this._removeCurrentVrm();
+    } catch {
+      /* dispose must never throw */
     }
-    this._idle.detach();
-    this._expressions.detach();
-    this._lipSync.detach();
-    this._lipSync.dispose();
-    this._mixer?.stopAllAction();
-    this._mixer?.removeEventListener('finished', this._onActionFinished);
-    this._mixer = null;
-    this._vrmaAction = null;
-    this._removeCurrentVrm();
-    this._renderer?.dispose();
+    // The dust owns a geometry + shader material + generated sprite texture;
+    // none of those were being released before.
+    try {
+      this._sparkles.dispose();
+    } catch {
+      /* best-effort */
+    }
+    try {
+      this._renderer?.dispose();
+    } catch {
+      /* best-effort */
+    }
     this._renderer = null;
     this._canvas = null;
+    this._gpuReleased = false;
   }
 
   // --- Controls -----------------------------------------------------------
@@ -850,27 +990,45 @@ export class AvatarEngine {
     this._renderer.render(this.scene, this.camera);
   }
 
+  private static _now(): number {
+    return typeof performance !== 'undefined' ? performance.now() : Date.now();
+  }
+
   private _tick = (): void => {
     if (this._disposed) return;
     this._rafId = requestAnimationFrame(this._tick);
 
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const now = AvatarEngine._now();
     const minInterval = 1000 / this._fps;
     if (this._lastFrameTime !== 0 && now - this._lastFrameTime < minInterval - 1) {
-      return; // FPS cap — skip this frame
+      // FPS cap. Return *before* doing anything: `_update()` is where the
+      // expensive per-frame adaptive-framing pass (`_fitToCurrentPose`, which
+      // samples key bones and solves the camera) and the sparkle simulation
+      // live, so a skipped frame costs nothing beyond the rAF callback itself.
+      return;
     }
     this._lastFrameTime = now;
 
     const delta = Math.min(this._clock.getDelta(), 0.1);
     this._update(delta);
     this._render();
+
+    this._recordPerf(AvatarEngine._now() - now, now);
   };
 
   private _startLoop(): void {
     if (this._disposed || this._renderer === null || this._rafId !== null) return;
     this._lastFrameTime = 0;
+    // Start a clean perf window: a sample that straddled the parked time would
+    // report a bogus frame rate.
+    this._perfFrames = 0;
+    this._perfBusyMs = 0;
+    this._perfWindowStart = 0;
     this._clock.start();
-    this._clock.getDelta(); // discard the time spent loading
+    // Discard the first delta so the time the loop spent parked (hidden tab,
+    // model load, GPU release) can never be handed to the animation as one
+    // giant step — the avatar resumes exactly where it left off.
+    this._clock.getDelta();
     this._tick();
   }
 
@@ -880,6 +1038,146 @@ export class AvatarEngine {
     }
     this._rafId = null;
     this._clock.stop();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Hidden-tab GPU release ("dispose after 60 s hidden")
+   *
+   * Keep every *logical* thing — the VRM, the mixer, the state machine, the
+   * mood, the position — but hand back the GPU memory the tab is holding while
+   * nobody is looking at it. three.js keeps the CPU-side geometry/texture data
+   * across `dispose()`, so the next render after the tab returns re-uploads
+   * everything automatically: no 17 MB re-download, no rebuild, just a cheap
+   * re-creation of the renderer on the same canvas.
+   * ------------------------------------------------------------------ */
+
+  /** Release the tab's GPU memory while it stays hidden. */
+  private _releaseGpuResources(): void {
+    if (this._disposed || this._gpuReleased) return;
+    // A stale timer must never blank an avatar the user is looking at again.
+    if (typeof document !== 'undefined' && !document.hidden) return;
+
+    this._gpuReleased = true;
+    this._stopLoop();
+
+    try {
+      this._disposeSceneGpu();
+    } catch {
+      /* never throw from a dispose path */
+    }
+    try {
+      this._sparkles.dispose();
+    } catch {
+      /* never throw from a dispose path */
+    }
+    try {
+      this._renderer?.dispose();
+    } catch {
+      /* never throw from a dispose path */
+    }
+    this._renderer = null;
+  }
+
+  /** Rebuild the renderer after a hidden-tab release (the lazy "reload"). */
+  private _restoreGpuResources(): void {
+    if (!this._gpuReleased) return;
+    this._gpuReleased = false;
+    const canvas = this._canvas;
+    if (this._disposed || !canvas) return;
+    try {
+      this._renderer = this._createRenderer(canvas);
+      this._resize();
+    } catch {
+      this._renderer = null;
+    }
+  }
+
+  /** Free every VRM geometry / material texture. Re-uploaded lazily on return. */
+  private _disposeSceneGpu(): void {
+    const vrm = this._vrm;
+    if (!vrm) return;
+    vrm.scene.traverse((object) => {
+      const mesh = object as THREE.Object3D & {
+        isMesh?: boolean;
+        isSkinnedMesh?: boolean;
+        geometry?: THREE.BufferGeometry;
+        material?: THREE.Material | THREE.Material[];
+      };
+      if (!mesh.isMesh && !mesh.isSkinnedMesh) return;
+      try {
+        mesh.geometry?.dispose();
+      } catch {
+        /* ignore */
+      }
+      const material = mesh.material;
+      if (Array.isArray(material)) for (const item of material) this._disposeMaterial(item);
+      else if (material) this._disposeMaterial(material);
+    });
+  }
+
+  /** Dispose a material and every texture it references (best-effort). */
+  private _disposeMaterial(material: THREE.Material): void {
+    try {
+      for (const value of Object.values(material as unknown as Record<string, unknown>)) {
+        const maybeTexture = value as { isTexture?: boolean; dispose?: () => void } | null;
+        if (maybeTexture && maybeTexture.isTexture === true) maybeTexture.dispose?.();
+      }
+      material.dispose();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private _scheduleGpuRelease(): void {
+    if (this._disposed || this._gpuReleased || this._gpuReleaseTimer !== null) return;
+    if (typeof setTimeout !== 'function') return;
+    this._gpuReleaseTimer = setTimeout(() => {
+      this._gpuReleaseTimer = null;
+      this._releaseGpuResources();
+    }, HIDDEN_GPU_RELEASE_MS);
+  }
+
+  private _cancelGpuRelease(): void {
+    if (this._gpuReleaseTimer !== null && typeof clearTimeout === 'function') {
+      clearTimeout(this._gpuReleaseTimer);
+    }
+    this._gpuReleaseTimer = null;
+  }
+
+  /* ---- dev perf readout ------------------------------------------- */
+
+  /** Fold one rendered frame into the rolling one-second sample. */
+  private _recordPerf(frameMs: number, now: number): void {
+    this._perfFrames += 1;
+    this._perfBusyMs += Math.max(0, frameMs);
+
+    if (this._perfWindowStart === 0) {
+      this._perfWindowStart = now;
+      return;
+    }
+    const windowMs = now - this._perfWindowStart;
+    if (windowMs < 1000) return;
+
+    const frames = this._perfFrames;
+    const busyMs = this._perfBusyMs;
+    const sample: AvatarEnginePerf = {
+      frames,
+      avgFrameMs: frames > 0 ? busyMs / frames : 0,
+      cpuPercent: Math.min(100, (busyMs / windowMs) * 100),
+      fps: frames,
+      fpsCap: this._fps,
+      at: Date.now(),
+    };
+    this._perfSample = sample;
+    this._perfFrames = 0;
+    this._perfBusyMs = 0;
+    this._perfWindowStart = now;
+    publishPerf(sample, this._perfOption);
+  }
+
+  /** The most recent one-second perf sample, or `null` before the first. */
+  get perf(): AvatarEnginePerf | null {
+    return this._perfSample;
   }
 
   /**
@@ -1010,10 +1308,32 @@ export class AvatarEngine {
     this._resizeObserver = null;
   }
 
+  /**
+   * Battery guard: a tab nobody is looking at has no reason to render.
+   *
+   * We key off `document.visibilitychange` ONLY and deliberately do not also
+   * listen to `window.blur`/`focus`. Blur fires for plenty of situations where
+   * the tab is still fully visible — DevTools opening, another window on a
+   * second monitor, clicking browser chrome, an embedded iframe stealing focus
+   * — and pausing there would freeze an avatar the user can still see, which is
+   * a visible behaviour change for no power win. `visibilitychange` is the one
+   * signal that actually means "this tab is not being looked at", and it is
+   * free.
+   *
+   * Hidden  → stop the loop (and the clock) and arm the 60 s GPU release.
+   * Visible → cancel the release, rebuild if it fired, resume with a fresh
+   *           delta (`_startLoop` discards the parked time, so nothing jumps).
+   */
   private _onVisibilityChange = (): void => {
     if (typeof document === 'undefined') return;
-    if (document.hidden) this._stopLoop();
-    else this._startLoop();
+    if (document.hidden) {
+      this._stopLoop();
+      this._scheduleGpuRelease();
+    } else {
+      this._cancelGpuRelease();
+      this._restoreGpuResources();
+      this._startLoop();
+    }
   };
 
   private _onActionFinished = (event: { action?: THREE.AnimationAction }): void => {

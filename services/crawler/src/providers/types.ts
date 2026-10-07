@@ -24,6 +24,8 @@ export interface CrawlInput {
   url: string;
   depth?: number;
   maxPages?: number;
+  /** Per-navigation timeout in ms (the caller caps the total crawl budget). */
+  timeoutMs?: number;
 }
 
 /**

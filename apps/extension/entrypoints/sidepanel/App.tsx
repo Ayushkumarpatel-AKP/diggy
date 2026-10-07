@@ -10,7 +10,16 @@ import {
   ThinkingDots,
 } from '@diggy/ui';
 import type { AvatarMood, CardAction, ChatMessage, Profile, RichCard } from '@diggy/shared';
-import { callContent, getBridgeStatus, recStart, recStop, recWarm, type BridgeEventMessage } from '../../src/messages';
+import {
+  VOICE_COPY,
+  callContent,
+  getBridgeStatus,
+  isRecAutoStop,
+  recStart,
+  recStop,
+  recWarm,
+  type BridgeEventMessage,
+} from '../../src/messages';
 import { isChordRelease, matchesShortcut } from '../../src/shortcut';
 import { STRINGS } from '../../src/strings';
 import {
@@ -131,6 +140,9 @@ export function App(): JSX.Element {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  // Push-to-talk state: true while a recording is in flight. A ref (not state)
+  // so the key handlers can round-trip; `listening` mirrors it for the badge.
+  const voiceHoldingRef = useRef(false);
 
   const context = useMemo(
     () => new PlatformToolContext({ onFillPlan: setPlan, onMood: setMood }),
@@ -177,6 +189,15 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     const listener = (raw: unknown): undefined => {
+      if (isRecAutoStop(raw)) {
+        // Toggle mode: the offscreen recorder heard silence (or hit its cap) and
+        // the background already stopped + transcribed the clip. Drop the
+        // panel's own "recording" state so the next press starts fresh instead
+        // of trying to stop a recording that has already been sent.
+        voiceHoldingRef.current = false;
+        setListening(false);
+        return undefined;
+      }
       if (typeof raw !== 'object' || raw === null) return undefined;
       const event = raw as { type?: unknown; event?: unknown; payload?: unknown };
       if (event.type === 'diggy:bridge-event') {
@@ -338,7 +359,11 @@ export function App(): JSX.Element {
 
   /* --- push-to-talk (also works while the panel has focus) -------------- */
 
-  const voiceHoldingRef = useRef(false);
+  const voiceMode = settings?.voiceMode === 'toggle' ? 'toggle' : 'hold';
+  const voiceModeRef = useRef<'hold' | 'toggle'>('hold');
+  // Read through a ref inside the key handlers so a mode switch never needs the
+  // listeners to be re-registered mid-chord (mirrors the in-page bubble).
+  voiceModeRef.current = voiceMode;
 
   useEffect(() => {
     const spec = settings?.shortcut?.trim() || 'Ctrl+Space';
@@ -348,16 +373,28 @@ export function App(): JSX.Element {
       voiceHoldingRef.current = true;
       setListening(true);
       try {
-        const result = await recStart();
+        // `autoStop` only takes effect in toggle mode: the offscreen recorder
+        // then ends the clip on silence, so a panel toggle never needs a key-up.
+        const result = await recStart(voiceModeRef.current === 'toggle');
         if (!result?.ok) {
           voiceHoldingRef.current = false;
           setListening(false);
-          push('assistant', result?.error ?? 'Microphone unavailable — click 🎙 once to allow it.');
+          // `needsPermission` means Chrome blocked the mic and the background has
+          // just opened the permissions page for a one-click fix.
+          push(
+            'assistant',
+            result?.needsPermission
+              ? VOICE_COPY.micBlocked
+              : result?.error ?? STRINGS.voice.micUnavailablePanel,
+          );
         }
       } catch (error) {
         voiceHoldingRef.current = false;
         setListening(false);
-        push('assistant', `Voice failed: ${error instanceof Error ? error.message : String(error)}`);
+        push(
+          'assistant',
+          STRINGS.voice.voiceFailedWith(error instanceof Error ? error.message : String(error)),
+        );
       }
     };
 
@@ -367,18 +404,28 @@ export function App(): JSX.Element {
       setListening(false);
       try {
         const result = await recStop();
-        if (!result?.ok) push('assistant', 'I could not hear anything — try again.');
+        if (!result?.ok) push('assistant', result?.error ?? STRINGS.voice.couldNotHearRetry);
       } catch {
-        push('assistant', 'Voice failed — try again.');
+        push('assistant', STRINGS.voice.voiceFailedRetry);
       }
     };
 
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.repeat || !matchesShortcut(event, spec)) return;
       event.preventDefault();
+      if (voiceModeRef.current === 'toggle') {
+        // Toggle mode mirrors the browser-level command exactly: one press
+        // starts, the next sends. `chrome.commands` has NO key-up, so a global
+        // shortcut can only ever toggle (see wxt.config.ts).
+        if (voiceHoldingRef.current) void end();
+        else void begin();
+        return;
+      }
       void begin();
     };
     const onKeyUp = (event: KeyboardEvent): void => {
+      // In toggle mode the release means nothing at all.
+      if (voiceModeRef.current === 'toggle') return;
       if (voiceHoldingRef.current && isChordRelease(event, spec)) void end();
     };
 
@@ -666,6 +713,16 @@ export function App(): JSX.Element {
                 onCheckedChange={(checked) => void updateSetting({ avatarVisible: checked })}
               />
             </div>
+            <div className="flex items-center justify-between">
+              <SketchToggle
+                label="Press to talk (auto-sends on silence)"
+                checked={settings.voiceMode === 'toggle'}
+                onCheckedChange={(checked) => void updateSetting({ voiceMode: checked ? 'toggle' : 'hold' })}
+              />
+            </div>
+            {/* First-run voice notice: where the audio goes and how replies are
+                spoken. One paragraph, English only. */}
+            <p className="text-[11px] leading-snug text-ink-500">{VOICE_COPY.firstRunNotice}</p>
             <p className="text-[11px] leading-snug text-ink-500">
               Hold <span className="font-semibold">{settings.shortcut}</span> on any page to talk to
               Diggy — the reply appears above the bot and is spoken aloud. If one provider hits its

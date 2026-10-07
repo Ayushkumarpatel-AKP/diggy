@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildServer } from '../src/server.js';
 import { extractFromHtml, htmlToMarkdown } from '../src/extract.js';
+import { inject } from './helpers.js';
 
 const FIXTURE = `<!DOCTYPE html>
 <html lang="en">
@@ -60,7 +61,7 @@ afterAll(async () => {
 
 describe('POST /extract (local HTML fixture, no network)', () => {
   it('returns clean markdown from a raw HTML string', async () => {
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'POST',
       url: '/extract',
       payload: { html: FIXTURE, url: 'https://example.com/notes' },
@@ -89,7 +90,7 @@ describe('POST /extract (local HTML fixture, no network)', () => {
   });
 
   it('rejects a request with neither html nor url', async () => {
-    const response = await app.inject({ method: 'POST', url: '/extract', payload: {} });
+    const response = await inject(app, { method: 'POST', url: '/extract', payload: {} });
     expect(response.statusCode).toBe(400);
   });
 });

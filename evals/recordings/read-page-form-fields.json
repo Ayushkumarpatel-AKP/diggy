@@ -1,0 +1,14 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "The form has fields for full name, email, phone, years of experience, a “why” textarea and a terms checkbox.",
+  "toolCalls": [
+    {
+      "name": "readPage",
+      "args": {
+        "includeFields": true
+      }
+    }
+  ]
+}

@@ -11,6 +11,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "eval": "node evals/run.mjs",
     "clean": "turbo run clean"
   },
   "devDependencies": {

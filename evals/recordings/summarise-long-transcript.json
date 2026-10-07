@@ -1,0 +1,12 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "A production migration story for Rust 1.85: async closures and the 2024 edition are the headline features, rolled out behind a flag after a two-week CI soak. Takeaway: migrate edition by edition, pin your MSRV, and ship behind a flag you can flip.",
+  "toolCalls": [
+    {
+      "name": "readPage",
+      "args": {}
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+id: summarise-inbox-page
+prompt: "Summarise what is on this page."
+fixture: inbox
+expect:
+  - tool_called: readPage
+  - text_contains: interview
+  - policy_decision: allowed
+weight: 1

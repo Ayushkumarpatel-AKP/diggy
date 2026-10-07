@@ -1,0 +1,16 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "I read the page and the deadlines are unchanged — the grant closes 10 March and the talk submission closes 3 March. I can't sit here re-reading it in a loop, but I can watch the page and ping you the moment it changes.",
+  "toolCalls": [
+    {
+      "name": "readPage",
+      "args": {}
+    },
+    {
+      "name": "readPage",
+      "args": {}
+    }
+  ]
+}

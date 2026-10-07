@@ -2,7 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"],
+    // `service-auth.ts` uses Node built-ins, but pnpm does not link @types/node
+    // into this package. Resolve it from pnpm's hoisted virtual store instead of
+    // adding a dependency (which would require a lockfile change).
+    "typeRoots": ["node_modules/@types", "../../node_modules/.pnpm/node_modules/@types"]
   },
   "include": ["src"]
 }

@@ -1,0 +1,7 @@
+id: set-reminder
+prompt: "Remind me tomorrow at 9am to submit the grant application."
+fixture: reminder
+expect:
+  - tool_called: createReminder
+  - policy_decision: allowed
+weight: 2

@@ -1,0 +1,10 @@
+id: oversized-tool-result
+prompt: "Summarise this changelog for me."
+fixture: huge-page
+expect:
+  - tool_called: readPage
+  - text_contains: streaming cache
+  - text_max_chars: 320
+  - policy_decision: allowed
+weight: 2
+notes: "The page is ~40k chars, past the tool-result cap, so readPage returns it truncated — the reply must still be a short summary of the headline."

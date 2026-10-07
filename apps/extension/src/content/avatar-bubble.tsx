@@ -5,16 +5,37 @@
  *
  * Features:
  *  - sits in a bottom corner and walks in on load
- *  - push-to-talk: hold a shortcut (default Ctrl+Shift+Space), speak, release
- *    → the background brain runs, and a speech bubble above the bot shows
- *    "Listening…" / "Thinking…" / the reply (truncated when long) and speaks it
+ *  - push-to-talk, in either mode (`voiceMode` setting):
+ *      · `hold`   — hold a shortcut (default Ctrl+Space), speak, release
+ *      · `toggle` — press once to start; the offscreen recorder ends the clip
+ *                   by itself after ~1.2 s of silence, press again to stop now
+ *    In both modes the background brain runs and a speech bubble above the bot
+ *    shows "Listening…" / "Thinking…" / the reply (truncated when long) and
+ *    speaks it. Note that a *browser-level* shortcut can only ever toggle:
+ *    `chrome.commands` has no key-up event.
  *  - a fill plan is confirmed inline (a small bubble with Fill / Cancel)
+ *  - on a page that blocks extensions (chrome://, the Web Store, the built-in
+ *    PDF viewer) the bubble cannot exist at all; the side panel's 🎙 button is
+ *    the documented fallback, and the hint below covers the leftover cases.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { VrmAvatar } from '@diggy/avatar';
 import type { VrmAvatarHandle } from '@diggy/avatar';
 import type { AvatarMood, AvatarState, FillInstruction, RichCard } from '@diggy/shared';
-import { isAgentDelta, isAgentDone, isAgentHeard, isFillPlan, recStart, recStop } from '../../src/messages';
+import {
+  DEFAULT_VOICE_MODE,
+  VOICE_COPY,
+  isAgentDelta,
+  isAgentDone,
+  isAgentHeard,
+  isFillPlan,
+  isRecAutoStop,
+  isRestrictedUrl,
+  readVoiceMode,
+  recStart,
+  recStop,
+  type VoiceMode,
+} from '../../src/messages';
 import { isChordRelease, matchesShortcut } from '../../src/shortcut';
 
 export type BubbleSide = 'left' | 'right';
@@ -108,6 +129,8 @@ export function AvatarBubble({
 
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [shortcut, setShortcut] = useState('Ctrl+Space');
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>(DEFAULT_VOICE_MODE);
+  const [restricted, setRestricted] = useState(false);
   const [holding, setHolding] = useState(false);
   const [heard, setHeard] = useState('');
 
@@ -116,17 +139,28 @@ export function AvatarBubble({
   const transcriptRef = useRef('');
   const hideTimerRef = useRef<number | null>(null);
   const voiceRef = useRef(true);
+  const voiceModeRef = useRef<VoiceMode>(DEFAULT_VOICE_MODE);
 
   voiceRef.current = voiceEnabled;
+  // Read through a ref inside the key handlers so a mode switch never needs the
+  // listeners to be re-registered mid-chord.
+  voiceModeRef.current = voiceMode;
 
   /* --- settings ------------------------------------------------------- */
 
   useEffect(() => {
     const readSettings = (store: Record<string, unknown>): void => {
-      const settings = store['diggy:settings'] as { voiceEnabled?: boolean; shortcut?: string } | undefined;
+      const settings = store['diggy:settings'] as
+        | { voiceEnabled?: boolean; shortcut?: string; voiceMode?: unknown }
+        | undefined;
       if (!settings) return;
       if (typeof settings.voiceEnabled === 'boolean') setVoiceEnabled(settings.voiceEnabled);
       if (typeof settings.shortcut === 'string' && settings.shortcut) setShortcut(settings.shortcut);
+      // Defensive: `voiceMode` is owned by src/storage.ts (not this worker), so
+      // anything unexpected keeps the existing hold-to-talk behaviour.
+      if (settings.voiceMode === 'toggle' || settings.voiceMode === 'hold') {
+        setVoiceMode(settings.voiceMode);
+      }
     };
     void (async () => {
       try {
@@ -134,6 +168,9 @@ export function AvatarBubble({
       } catch {
         /* defaults are fine */
       }
+      // Straight from storage as well, so a shape we did not expect still
+      // resolves to a mode instead of leaving the component guessing.
+      setVoiceMode(await readVoiceMode());
     })();
     // React live when the shortcut is changed in the side panel.
     const listener = (
@@ -155,6 +192,21 @@ export function AvatarBubble({
         /* ignore */
       }
     };
+  }, []);
+
+  /* --- restricted pages ------------------------------------------------ */
+
+  // Chrome never injects a content script into `chrome://`, the Web Store or
+  // the built-in PDF viewer, so there is no bubble there to begin with — the
+  // side panel's 🎙 button is the documented fallback for those pages. This
+  // check covers the leftovers (a frame that *did* get injected) and is what
+  // makes the hint below appear instead of a silent failure.
+  useEffect(() => {
+    try {
+      setRestricted(isRestrictedUrl(window.location.href));
+    } catch {
+      setRestricted(false);
+    }
   }, []);
 
   /* --- bubble bus (from the content script) --------------------------- */
@@ -277,6 +329,17 @@ export function AvatarBubble({
         setState('idle');
         return undefined;
       }
+      if (isRecAutoStop(raw)) {
+        // Toggle mode: the offscreen recorder heard ~1.2 s of silence (or hit
+        // its 60 s cap) and asked the background to stop. The background stops,
+        // transcribes and streams the reply itself — only the UI moves here, so
+        // the clip is never sent twice.
+        holdingRef.current = false;
+        setHolding(false);
+        setPhase((current) => (current === 'listening' ? 'thinking' : current));
+        setState((current) => (current === 'listen' ? 'think' : current));
+        return undefined;
+      }
       return undefined;
     };
     browser.runtime.onMessage.addListener(listener);
@@ -295,16 +358,34 @@ export function AvatarBubble({
     setPhase('listening');
     setText('');
     setState('listen');
+    if (restricted) {
+      // No extension can run on this page (chrome://, the Web Store, the PDF
+      // viewer) — say where talking *is* possible instead of failing silently.
+      holdingRef.current = false;
+      setHolding(false);
+      setPhase('reply');
+      setText(VOICE_COPY.restrictedPage);
+      scheduleHide();
+      return;
+    }
     try {
       // The background owns the mic (offscreen recorder) + Whisper transcription.
-      const result = await recStart();
+      // `autoStop` only takes effect in toggle mode: the recorder then ends the
+      // clip on silence, so the shortcut never needs a key-up it cannot get.
+      const result = await recStart(voiceModeRef.current === 'toggle');
       if (!result?.ok) {
         // eslint-disable-next-line no-console
         console.warn('[Diggy] voice start failed', result);
         holdingRef.current = false;
         setHolding(false);
         setPhase('reply');
-        setText(result?.error ?? 'Microphone unavailable — open the side panel and click 🎙 once.');
+        // `needsPermission` means Chrome blocked the mic and the background has
+        // just opened the permissions page for a one-click fix.
+        setText(
+          result?.needsPermission
+            ? VOICE_COPY.micBlocked
+            : result?.error ?? 'Microphone unavailable — open the side panel and click 🎙 once.',
+        );
         scheduleHide();
         return;
       }
@@ -317,7 +398,7 @@ export function AvatarBubble({
       setText(`Voice failed: ${error instanceof Error ? error.message : String(error)}`);
       scheduleHide();
     }
-  }, [scheduleHide]);
+  }, [scheduleHide, restricted]);
 
   const finishListening = useCallback(async () => {
     if (!holdingRef.current) return;
@@ -349,9 +430,19 @@ export function AvatarBubble({
       if (!matchesShortcut(event, shortcut)) return;
       event.preventDefault();
       event.stopPropagation();
+      if (voiceModeRef.current === 'toggle') {
+        // Toggle mode: one press starts, the next press sends. This mirrors the
+        // browser-level command exactly — `chrome.commands` has NO key-up event,
+        // so a global shortcut can only ever toggle (see wxt.config.ts).
+        if (holdingRef.current) void finishListening();
+        else void startListening();
+        return;
+      }
       void startListening();
     };
     const onKeyUp = (event: KeyboardEvent): void => {
+      // In toggle mode the release means nothing at all.
+      if (voiceModeRef.current === 'toggle') return;
       if (!holdingRef.current) return;
       if (isChordRelease(event, shortcut)) void finishListening();
     };
@@ -480,7 +571,11 @@ export function AvatarBubble({
               ) : null}
               {phase === 'listening' && !shown ? (
                 <span className="diggy-bubble__say-body diggy-bubble__say-muted">
-                  Hold {shortcut} and speak, then release.
+                  {restricted
+                    ? VOICE_COPY.restrictedPage
+                    : voiceMode === 'toggle'
+                      ? VOICE_COPY.listeningToggle
+                      : `Hold ${shortcut} and speak, then release.`}
                 </span>
               ) : null}
             </div>
@@ -514,14 +609,31 @@ export function AvatarBubble({
         type="button"
         className="diggy-bubble__mic"
         data-hold={holding}
-        aria-label="Hold to talk"
-        title={`Hold to talk (or hold ${shortcut})`}
+        data-mode={voiceMode}
+        data-restricted={restricted}
+        aria-label={voiceMode === 'toggle' ? 'Start or stop talking' : 'Hold to talk'}
+        title={
+          restricted
+            ? 'This page blocks extensions — open the Diggy side panel and click 🎙'
+            : voiceMode === 'toggle'
+              ? `Press ${shortcut} to start talking, press again to send`
+              : `Hold to talk (or hold ${shortcut})`
+        }
         onPointerDown={(event) => {
           event.preventDefault();
+          if (voiceMode === 'toggle') {
+            // Toggle mode: a tap is an on/off switch (same as the shortcut).
+            if (holdingRef.current) void finishListening();
+            else void startListening();
+            return;
+          }
           void startListening();
         }}
-        onPointerUp={() => void finishListening()}
+        onPointerUp={() => {
+          if (voiceMode !== 'toggle') void finishListening();
+        }}
         onPointerLeave={() => {
+          if (voiceMode === 'toggle') return;
           if (holdingRef.current) void finishListening();
         }}
       >
@@ -729,6 +841,13 @@ export const BUBBLE_STYLES = `
   background: #ff9db3;
   opacity: 1;
   transform: scale(1.08);
+}
+/* A page extensions cannot run on: the button only points at the side panel, so
+   it stays visible (instead of the usual faint state) and stops pulsing. */
+.diggy-bubble__mic[data-restricted='true'] {
+  background: #ffe8b8;
+  opacity: 0.95;
+  animation: none;
 }
 @keyframes diggy-say-in {
   0% { transform: translateY(6px) scale(0.94); opacity: 0; }

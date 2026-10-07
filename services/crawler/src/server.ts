@@ -1,3 +1,4 @@
+import { evaluateRequest } from '@diggy/shared/service-auth';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { extractFromHtml } from './extract.js';
 import { crawl, fetchPageHtml } from './crawl.js';
@@ -10,6 +11,7 @@ import {
   reachProviderSummary,
 } from './providers/reach.js';
 import { isNetworkDisabled, searchWeb } from './search.js';
+import { MAX_RESPONSE_BYTES, TOTAL_TIMEOUT_MS, checkUrl } from './ssrf.js';
 
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 17322;
@@ -48,6 +50,14 @@ interface FeedQuery {
   max?: string;
 }
 
+/** Options accepted by {@link buildServer}. */
+export interface BuildServerOptions {
+  /** Port used for Host-header validation (default {@link DEFAULT_PORT}). */
+  port?: number;
+  /** Expected per-install token; defaults to `DIGGY_TOKEN` / `~/.diggy/token`. */
+  token?: string;
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -77,11 +87,24 @@ function parseBoundedInt(value: unknown, fallback: number, upper: number): numbe
 
 /**
  * Build the Fastify instance for the local crawler/research service.
- * Exposed separately from {@link startServer} so it can be driven by
- * `fastify.inject()` in tests without opening a socket.
+ *
+ * Every request passes the shared service guard (Host + Origin + `x-diggy-token`
+ * + JSON content type). Exposed separately from {@link startServer} so it can
+ * be driven by `fastify.inject()` in tests without opening a socket.
  */
-export function buildServer(): FastifyInstance {
+export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
+  const port = options.port ?? DEFAULT_PORT;
+
+  app.addHook('onRequest', async (request, reply) => {
+    const result = evaluateRequest(
+      { method: request.method, url: request.url, headers: request.headers },
+      { port, ...(options.token !== undefined ? { token: options.token } : {}) },
+    );
+    if (!result.ok) {
+      return reply.code(result.status).send(result.body);
+    }
+  });
 
   app.get('/health', async () => ({
     status: 'ok',
@@ -105,13 +128,23 @@ export function buildServer(): FastifyInstance {
     }
 
     if (url && url.trim()) {
+      const guard = await checkUrl(url);
+      if (!guard.ok) {
+        reply.code(400);
+        return { error: 'blocked_url', reason: guard.reason };
+      }
+
       const provider = resolveProvider(body.provider);
       try {
         if (typeof provider.extract === 'function') {
           const result = await provider.extract(url);
           return { ...result, provider: provider.name };
         }
-        const fetched = await fetchPageHtml(url);
+        const fetched = await fetchPageHtml(url, { timeoutMs: TOTAL_TIMEOUT_MS });
+        if (fetched.length > MAX_RESPONSE_BYTES) {
+          reply.code(502);
+          return { error: `Failed to fetch ${url}: response exceeds ${MAX_RESPONSE_BYTES} bytes` };
+        }
         return { ...extractFromHtml(fetched, url), provider: 'builtin' };
       } catch (error) {
         reply.code(502);
@@ -130,12 +163,19 @@ export function buildServer(): FastifyInstance {
       return { error: 'Request body must include a "url".' };
     }
 
+    const guard = await checkUrl(body.url);
+    if (!guard.ok) {
+      reply.code(400);
+      return { error: 'blocked_url', reason: guard.reason };
+    }
+
     const provider = resolveProvider(body.provider);
     try {
       const results = await provider.crawl({
         url: body.url,
         depth: body.depth,
         maxPages: body.maxPages,
+        timeoutMs: TOTAL_TIMEOUT_MS,
       });
       return { results, provider: provider.name };
     } catch (error) {
@@ -256,7 +296,7 @@ export function buildServer(): FastifyInstance {
  * a public interface.
  */
 export async function startServer(port: number = DEFAULT_PORT): Promise<FastifyInstance> {
-  const app = buildServer();
+  const app = buildServer({ port });
   await app.listen({ port, host: HOST });
   return app;
 }

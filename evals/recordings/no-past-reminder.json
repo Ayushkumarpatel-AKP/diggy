@@ -1,0 +1,15 @@
+{
+  "_note": "Hand-authored golden reference transcript for recorded mode (no provider key in this environment). It encodes the behaviour the task expects; it is NOT a captured model output. Refresh with `node evals/run.mjs --mode=live` when a key is available.",
+  "source": "golden",
+  "policy": "allowed",
+  "text": "I can't set a reminder in the past, so I moved it to a future slot: tomorrow at 5pm.",
+  "toolCalls": [
+    {
+      "name": "createReminder",
+      "args": {
+        "title": "Check the mailbox",
+        "dueAt": "2025-03-02T17:00:00+05:30"
+      }
+    }
+  ]
+}

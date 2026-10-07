@@ -6,12 +6,30 @@
  *  - runs a *throttled, silent-by-default* DOM observer (no spam)
  *
  * It never submits a form.
+ *
+ * Phase 6 — battery. A VRM loop in *every* tab is the most expensive thing this
+ * product does, so this script is now frugal about when the avatar even exists:
+ *  - the 17 MB model is **not fetched** until the avatar is first shown (lazy
+ *    load: the bubble is created hidden, and `VrmAvatar` — the only thing that
+ *    fetches the model — is not mounted until it is revealed),
+ *  - the tab renders at 30 fps by default and parks entirely while hidden,
+ *    releasing its GPU memory after 60 s (see `AvatarEngine`),
+ *  - it never mounts the avatar at all on the per-site disable list.
+ *
+ * Lazy load is gated by `Settings.avatarAutoLoad` (default `false`); the
+ * existing `Settings.avatarVisible` still decides whether the bubble is shown.
  */
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { AVATAR_MODEL_PATH, type PageContext } from '@diggy/shared';
 import { AvatarBubble, BUBBLE_STYLES, bubbleBus } from '../src/content/avatar-bubble';
-import { isContentExec } from '../src/messages';
+import {
+  isAgentDelta,
+  isAgentDone,
+  isAgentHeard,
+  isContentExec,
+  isFillPlan,
+} from '../src/messages';
 import type {
   ContentExecMessage,
   ContentMethod,
@@ -19,16 +37,49 @@ import type {
   ContentMethodResults,
   ContentResponse,
 } from '../src/messages';
+import { getSettings, isAvatarDisabledForHost, type Settings } from '../src/storage';
 import { scanFields } from '../src/web/dom-scanner';
 import { fillFields } from '../src/web/form-filler';
 import { createDomObserver } from '../src/web/observer';
 
 const HOST_ID = 'diggy-avatar-host';
 
+/**
+ * The tab's single avatar slot.
+ *
+ * ONE WEBGL CONTEXT PER TAB. Browsers cap the number of live WebGL contexts per
+ * renderer process (Chrome: ~16) and, once the cap is hit, silently kill the
+ * *oldest* context — which surfaces as a black/frozen avatar and a
+ * `webglcontextlost` nobody is listening for. So the content script owns
+ * exactly one slot: `mountBubble` refuses to create a second host, which also
+ * catches a re-injected copy of this file racing the first run, and
+ * `onInvalidated` empties the slot so a later injection can take over cleanly.
+ */
+const avatarSlot: { root: Root | null } = { root: null };
+
+/** Mirrors the `avatarVisible` setting; kept in sync by the side panel. */
 let avatarVisible = true;
 
-function mountBubble(): Root | null {
-  if (document.getElementById(HOST_ID)) return null;
+/**
+ * DEV ONLY: let `AvatarEngine` publish its `window.__diggyPerf` readout.
+ *
+ * The read is the literal `import.meta.env.DEV` so Vite/WXT can replace it at
+ * build time — an intermediate variable would defeat the replacement and the
+ * helper would never turn on.
+ */
+function enablePerfReporting(): void {
+  const scope = window as unknown as { __diggyPerfEnabled?: boolean };
+  if (scope.__diggyPerfEnabled !== undefined) return;
+  try {
+    if (import.meta.env.DEV === true) scope.__diggyPerfEnabled = true;
+  } catch {
+    /* no bundler env — the engine's own dev detection still applies */
+  }
+}
+
+function mountBubble(initialVisible: boolean): Root | null {
+  // One host — and therefore one canvas and one WebGL context — per document.
+  if (avatarSlot.root || document.getElementById(HOST_ID)) return null;
 
   const host = document.createElement('div');
   host.id = HOST_ID;
@@ -46,11 +97,72 @@ function mountBubble(): Root | null {
   root.render(
     createElement(AvatarBubble, {
       modelUrl: browser.runtime.getURL(AVATAR_MODEL_PATH),
-      initialVisible: avatarVisible,
+      // Lazy by default: while this is false the bubble renders only its
+      // controls, `VrmAvatar` never mounts and the model is never fetched.
+      // The bubble's own toggle (or `installLazyReveal` below) flips it true.
+      initialVisible,
       side: 'left',
     }),
   );
+  avatarSlot.root = root;
   return root;
+}
+
+/**
+ * Reveal a lazily-loaded avatar exactly once, then disarm.
+ *
+ * Two triggers, matching "hidden until the user's first interaction or the
+ * first assistant reply": the first assistant reply arriving from the
+ * background, and the user's first gesture on the page. Bubble controls are
+ * deliberately excluded from the gesture listener — the toggle button flips
+ * visibility itself and the mic reveals on the reply, so reacting to those too
+ * would toggle the avatar straight back off.
+ *
+ * Returns a disposer for `onInvalidated`.
+ */
+function installLazyReveal(): () => void {
+  let cancelled = false;
+
+  function cleanup(): void {
+    if (cancelled) return;
+    cancelled = true;
+    try {
+      browser.runtime.onMessage.removeListener(onMessage);
+    } catch {
+      /* ignore */
+    }
+    window.removeEventListener('pointerdown', onGesture, true);
+    window.removeEventListener('keydown', onGesture, true);
+  }
+
+  const reveal = (): void => {
+    cleanup();
+    bubbleBus.emit({ type: 'visible', visible: true });
+  };
+
+  function onMessage(raw: unknown): undefined {
+    if (isAgentDone(raw) || isAgentDelta(raw) || isAgentHeard(raw) || isFillPlan(raw)) reveal();
+    return undefined;
+  }
+
+  function isBubbleControl(event: Event): boolean {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    for (const node of path) {
+      const className = (node as { className?: unknown }).className;
+      if (typeof className === 'string' && /diggy-bubble__(toggle|mic)/.test(className)) return true;
+    }
+    return false;
+  }
+
+  function onGesture(event: Event): void {
+    if (isBubbleControl(event)) return;
+    reveal();
+  }
+
+  browser.runtime.onMessage.addListener(onMessage);
+  window.addEventListener('pointerdown', onGesture, true);
+  window.addEventListener('keydown', onGesture, true);
+  return cleanup;
 }
 
 /* ------------------------------------------------------------------ *
@@ -154,10 +266,14 @@ export default defineContentScript({
     if (scope.__diggyContentMounted) return;
     scope.__diggyContentMounted = true;
 
-    const root = mountBubble();
+    enablePerfReporting();
+
+    let invalidated = false;
+    let stopLazyReveal: (() => void) | null = null;
 
     // Throttled, silent-by-default observer: it only marks the DOM dirty and
     // reports when someone explicitly asks (`setReporting(true)` / `requestReport`).
+    // Page reading/filling stays available even where the avatar is disabled.
     const observer = createDomObserver({
       throttleMs: 1500,
       onReport(report) {
@@ -178,9 +294,38 @@ export default defineContentScript({
       .sendMessage({ type: 'diggy:content-event', event: 'ready', payload: { url: location.href } })
       .catch(() => undefined);
 
+    // Mounting waits on settings: the per-site disable list and the lazy-load
+    // flags both live there. Everything above is already running by this point.
+    void (async () => {
+      let settings: Settings | null = null;
+      try {
+        settings = await getSettings();
+      } catch {
+        settings = null; // defaults are safe: avatar on, lazy load, no extra denies
+      }
+      if (invalidated) return;
+
+      // Never draw a bot on a sensitive site (banks, payments, password
+      // managers, health portals…). `isAvatarDisabledForHost` fails closed.
+      if (isAvatarDisabledForHost(location.hostname, settings)) return;
+
+      avatarVisible = settings?.avatarVisible !== false;
+      const autoLoad = settings?.avatarAutoLoad === true;
+
+      // `avatarVisible` still wins: if the user turned the bubble off we create
+      // it hidden and never auto-reveal. Otherwise `autoLoad` decides whether the
+      // model is fetched now (`true`) or on first show (`false`, the default).
+      mountBubble(avatarVisible && autoLoad);
+      if (avatarVisible && !autoLoad) stopLazyReveal = installLazyReveal();
+    })();
+
     ctx.onInvalidated(() => {
+      invalidated = true;
+      stopLazyReveal?.();
+      stopLazyReveal = null;
       observer.stop();
-      root?.unmount();
+      avatarSlot.root?.unmount();
+      avatarSlot.root = null;
       document.getElementById(HOST_ID)?.remove();
       scope.__diggyContentMounted = false;
     });
