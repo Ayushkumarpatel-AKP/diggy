@@ -38,6 +38,7 @@ import { checkWatch } from '../src/web';
 import { addSeenIds, getSeenIds } from '../src/google';
 import { readCalendarSmart, readInboxSmart } from '../src/accounts';
 import { latestVideos, linkCard, parseVideoRequest, searchLatestVideo, videoCard } from '../src/cards';
+import { STRINGS } from '../src/strings';
 
 const ALARM_TICK = 'diggy:reminder-tick';
 const ALARM_PREFIX = 'diggy:reminder:';
@@ -258,7 +259,7 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
     if (video) {
       send({
         type: 'diggy:agent-done',
-        text: `Ye raha ${channel} ka latest video 👇`,
+        text: STRINGS.video.latest(channel),
         ok: true,
         card: videoCard({
           videoId: video.videoId,
@@ -276,13 +277,13 @@ async function runAsk(message: AgentAskMessage, senderTabId?: number): Promise<v
     const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${channel} latest video`)}`;
     send({
       type: 'diggy:agent-done',
-      text: `Abhi "${channel}" ka video nahi mila. YouTube par ye search try karo — ya channel ka poora naam bolo.`,
+      text: STRINGS.video.notFound(channel, searchUrl),
       ok: false,
       spoke: true,
       card: linkCard({
         url: searchUrl,
-        title: `Search “${channel} latest video”`,
-        subtitle: 'YouTube search',
+        title: STRINGS.video.searchCardTitle(channel),
+        subtitle: STRINGS.video.searchCardSubtitle,
       }),
     });
     return;
@@ -496,14 +497,11 @@ async function fireReminder(reminder: Reminder): Promise<void> {
     ? ''
     : at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const note = reminder.notes?.trim();
-  await showNotification(
-    `⏰ ${reminder.title}`,
-    note || (time ? `${time} ka reminder — abhi!` : 'Abhi ka time hai!'),
-  );
+  await showNotification(STRINGS.reminder.firedTitle(reminder.title), STRINGS.reminder.firedBody(time, note));
 
   const tabId = await activeTabId();
   if (tabId != null) {
-    const text = `⏰ ${reminder.title} — ${time ? `${time} ho gaya` : 'time ho gaya'}! ${note ?? 'Ab ye kaam karna hai.'}`;
+    const text = STRINGS.reminder.firedInPage(reminder.title, time, note);
     const send = (payload: unknown): void => {
       void browser.tabs.sendMessage(tabId, payload).catch(() => undefined);
     };

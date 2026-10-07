@@ -181,6 +181,34 @@ export function AvatarBubble({
     return () => window.clearTimeout(timer);
   }, [visible, side]);
 
+  /* --- idle variety --------------------------------------------------- */
+
+  // The bot used to just stand there. Every so often it now does something —
+  // a wave, a look around, a little dance — so it feels alive between answers.
+  useEffect(() => {
+    if (!visible) return undefined;
+    // Only the shipped animations — see SHIPPED_CLIP_IDS in @diggy/avatar.
+    const IDLE_CLIPS = [
+      'idle.lookAround',
+      'gesture.wave',
+      'gesture.waveBoth',
+      'gesture.clap',
+      'gesture.shrug',
+      'emote.laugh',
+      'emote.surprised',
+    ];
+    const timer = window.setInterval(() => {
+      // Never interrupt a live answer.
+      if (holdingRef.current) return;
+      const handle = avatarRef.current;
+      const engine = handle ? handle.engine() : null;
+      if (!engine) return;
+      const pick = IDLE_CLIPS[Math.floor(Math.random() * IDLE_CLIPS.length)];
+      if (pick) engine.playClip(pick);
+    }, 14000);
+    return () => window.clearInterval(timer);
+  }, [visible]);
+
   /* --- speaking ------------------------------------------------------- */
 
   const speak = useCallback((value: string) => {

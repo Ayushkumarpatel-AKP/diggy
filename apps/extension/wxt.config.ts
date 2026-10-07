@@ -31,6 +31,15 @@ export default defineConfig({
       'identity',
     ],
     host_permissions: ['<all_urls>'],
+    // A fixed extension ID (derived from this public key) so things that are
+    // keyed to the ID keep working: the Google OAuth redirect URI
+    // (`https://<id>.chromiumapp.org/`) that must be registered on the OAuth
+    // client, and any allow-listing. Without it the ID follows the folder path
+    // and changes the moment the extension is loaded from somewhere else.
+    //
+    // NOTE: this key is for local/dev installs. A build published to a store
+    // gets its own ID and must NOT ship this key.
+    key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzLvSCXPkpN1Yp61wiNRCqS99/a9P8l/Nw4kf9kGcxU90+/nBugMYJvPIJVju1XC/Rdspy1cyP0h2hnyuRaWa5FEd38O1pis2upAs6WwXvCirIr0KND/EdFVNtQqZpcPd2c9FvRqyKJHKpe/NL9jo1xAn3bdOt34aNUxW06HrAfO2YnKdWSZuswxNoTMhCbg24qb6Oubzq1F+9JWN/+RxJk15LDMBJ0FDIfGXfCM7uaA9NgFWKdwl+eCuZs9S2Yy4BriAdJoPG1+qEFFeqntqH55v6F5XWRNv9l7Lr2JReEEmcceldapEwB9JdSjopylSr5SUnUG6VSHhOZCUXYrmUQIDAQAB',
     // Browser-level push-to-talk. A page never sees a chord that another
     // extension has claimed globally, so this guarantees the shortcut works.
     // Commands have no key-up → it toggles (press to start, press again to send).

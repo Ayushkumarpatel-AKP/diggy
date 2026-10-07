@@ -109,7 +109,9 @@ async function challengeFor(verifier: string): Promise<string> {
 
 export async function connectGoogle(clientId: string): Promise<GoogleStatus> {
   const id = clientId.trim();
-  if (!id) throw new Error('Paste your Google OAuth Client ID first.');
+  if (!id) {
+    throw new Error('No Google Client ID is configured. Add one in Settings (⚙) → Apps.');
+  }
 
   const redirectUri = googleRedirectUrl();
   const verifier = randomString();

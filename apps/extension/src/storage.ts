@@ -62,17 +62,21 @@ export interface Todo {
 }
 
 /**
- * Build-time env defaults (from a gitignored `apps/extension/.env`).
- * These make the bot work out of the box for local/dev builds; they are baked
- * into the bundle, so never ship a build made with keys present.
+ * Build-time defaults from a gitignored `apps/extension/.env`.
+ *
+ * Only NON-SECRET values may be baked in here. API keys are deliberately NOT
+ * read from the environment: a bundle with keys inside leaks them to anyone who
+ * opens the build. Keys come from Settings at runtime (`getSettings`), and
+ * `.env.example` documents every value this file may pick up.
  */
 const ENV =
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
 
 export const DEFAULT_SETTINGS: Settings = {
   provider: ENV.VITE_DEFAULT_PROVIDER === 'nvidia' ? 'nvidia' : 'groq',
-  groqKey: ENV.VITE_GROQ_API_KEY ?? '',
-  nvidiaKey: ENV.VITE_NVIDIA_API_KEY ?? '',
+  // Keys are user-supplied — never baked into a build.
+  groqKey: '',
+  nvidiaKey: '',
   model: '',
   bridgeUrl: BRIDGE_DEFAULT_URL,
   bridgeToken: '',
@@ -133,11 +137,6 @@ const LEGACY_SHORTCUTS = ['Ctrl+Shift+Space'];
 export async function getSettings(): Promise<Settings> {
   const stored = await readValue<Partial<Settings>>(STORAGE_KEYS.settings, {});
   if (stored.shortcut && LEGACY_SHORTCUTS.includes(stored.shortcut)) delete stored.shortcut;
-  // An empty key means "never set", not "deliberately off": fall back to the
-  // build's default so provider failover keeps working instead of silently
-  // leaving the user with a single brain.
-  if (!stored.groqKey) delete stored.groqKey;
-  if (!stored.nvidiaKey) delete stored.nvidiaKey;
   return { ...DEFAULT_SETTINGS, ...stored };
 }
 

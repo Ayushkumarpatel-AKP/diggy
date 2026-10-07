@@ -32,6 +32,7 @@ import {
   type ScheduleReminderMessage,
 } from './messages';
 import { addReminder, getProfile as readStoredProfile, getReminders, getSettings } from './storage';
+import { STRINGS } from './strings';
 import { extractRemote, fetchReadable, searchRemote } from './web';
 import { readCalendarSmart, readInboxSmart } from './accounts';
 
@@ -240,7 +241,7 @@ export class PlatformToolContext implements ToolContext {
       badge: 'reminder set',
       details: reminder.notes ? [{ label: 'Note', value: reminder.notes }] : undefined,
       actions: [
-        { id: 'list', label: 'My reminders', kind: 'message', value: 'mere reminders dikhao', variant: 'ghost' },
+        { id: 'list', label: 'My reminders', kind: 'message', value: STRINGS.reminder.listAction, variant: 'ghost' },
       ],
     });
     return reminder;

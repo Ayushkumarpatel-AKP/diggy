@@ -350,7 +350,7 @@ export async function searchLatestVideo(name: string): Promise<YouTubeVideo | un
 
 const WANT_LATEST = /(latest|newest|recent|last|new|fresh|naya|nayi|nayā|navin|abhi ka)/i;
 
-/** "kholo / chalao / dikhao / play" — an explicit ask, so "latest" is implied. */
+/** "play / open / show" plus common Hindi equivalents — an explicit ask, so "latest" is implied. */
 const PLAY_VERB = /\b(khol|kholo|kholna|chala|chalao|chalo|dikha|dikhao|play|open|show|sunao|dekhna|dekh)\b/i;
 
 /** People say "video" in many shapes — and typo it. */
@@ -363,7 +363,7 @@ const FILLER =
   /\b(on|pe|par|from|se|me|mey|of|ka|ki|ke|s|youtube|yt|video|vdo|vid|cideo|clip|upload|uploaded|abhi|latest|newest|recent|last|new|fresh|naya|nayi|nayā|navin)\b/gi;
 
 /**
- * "youtube pe MrBeast ka latest video kholo" → "MrBeast".
+ * "play MrBeast's latest video on YouTube" → "MrBeast".
  *
  * Best-effort and deliberately conservative: anything that doesn't clearly
  * read as "the latest video of <channel>" returns `undefined`, so the message
@@ -372,7 +372,7 @@ const FILLER =
 export function parseVideoRequest(text: string): string | undefined {
   const source = (text ?? '').trim();
   if (!source || !VIDEO_WORD.test(source)) return undefined;
-  // "latest" is implied by an explicit ask ("mr beast ka video kholo").
+  // "latest" is implied by an explicit ask ("play mr beast's video").
   if (!WANT_LATEST.test(source) && !PLAY_VERB.test(source)) return undefined;
   const cleaned = source
     .replace(NOISE, ' ')

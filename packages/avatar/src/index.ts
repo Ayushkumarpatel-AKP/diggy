@@ -20,6 +20,15 @@ export type {
 export { ProceduralIdle, REST_BONES, addBoneOffset } from './idle.js';
 export type { BoneOffset } from './idle.js';
 
+// Procedural animation clips (dance, gestures, emotes, poses…)
+export * from './animations/index.js';
+
+// Staging — where on screen the bot sits, and how it enters/leaves
+export * from './staging.js';
+
+// Magic dust (additive sparkle particles)
+export * from './particles.js';
+
 // Expressions
 export {
   ExpressionController,

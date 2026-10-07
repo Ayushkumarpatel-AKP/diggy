@@ -12,6 +12,7 @@ import {
 import type { AvatarMood, CardAction, ChatMessage, Profile, RichCard } from '@diggy/shared';
 import { callContent, getBridgeStatus, recStart, recStop, recWarm, type BridgeEventMessage } from '../../src/messages';
 import { isChordRelease, matchesShortcut } from '../../src/shortcut';
+import { STRINGS } from '../../src/strings';
 import {
   applyFillPlan,
   PlatformToolContext,
@@ -248,7 +249,7 @@ export function App(): JSX.Element {
             video
               ? messageWithCard(
                   'assistant',
-                  `Ye raha ${channel} ka latest video 👇`,
+                  STRINGS.video.latest(channel),
                   videoCard({
                     videoId: video.videoId,
                     title: video.title,

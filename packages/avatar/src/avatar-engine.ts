@@ -12,6 +12,11 @@ import { LipSync } from './lipsync.js';
 import type { AmplitudeSource } from './lipsync.js';
 import { ProceduralIdle, addBoneOffset } from './idle.js';
 import type { BoneOffset } from './idle.js';
+import { ClipPlayer, ANIMATION_CLIPS } from './animations/index.js';
+import { SparkleField, clipWantsSparkles } from './particles.js';
+import { getStage } from './staging.js';
+import { boundsAround, isFiniteBounds, solveFrame, unionBounds } from './framing.js';
+import type { Bounds } from './framing.js';
 
 /** Where `.vrma` clips are looked up by default (served from the host's static dir). */
 export const DEFAULT_VRMA_DIR = '/animations';
@@ -346,6 +351,8 @@ export class AvatarEngine {
 
   /** Attach (or re-attach) the engine to a `<canvas>` and start the loop. */
   mount(canvas: HTMLCanvasElement): void {
+    // The dust lives in the scene graph, added once the engine mounts.
+    if (!this._sparkles.points.parent) this.scene.add(this._sparkles.points);
     this._assertNotDisposed();
     if (this._canvas === canvas && this._renderer) return;
     if (this._renderer) this.unmount();
@@ -495,6 +502,88 @@ export class AvatarEngine {
   /** Which side the avatar walks in from / out to. */
   setSide(side: 'left' | 'right'): void {
     this._side = side;
+  }
+
+  /* ---- animation clips + staging ---------------------------------- */
+
+  /** Procedural clip layer (dance, gestures, emotes, poses, entry/exit). */
+  private readonly _clips = new ClipPlayer();
+  /** Magic dust under the bot during spins, dances and celebrations. */
+  private readonly _sparkles = new SparkleField();
+  private _stage: string | undefined;
+
+  /**
+   * Bones that bound the *animated* pose, with a generous radius each.
+   *
+   * Sampling a handful of bones is what makes per-frame re-framing cheap — the
+   * alternative (`Box3.setFromObject` on a skinned mesh) walks every vertex and
+   * is far too slow to run every frame.
+   */
+  private static readonly _FIT_BONES: readonly { bone: VRMHumanBoneName; radius: number }[] = [
+    { bone: 'head', radius: 0.17 },
+    { bone: 'leftHand', radius: 0.14 },
+    { bone: 'rightHand', radius: 0.14 },
+    { bone: 'leftFoot', radius: 0.13 },
+    { bone: 'rightFoot', radius: 0.13 },
+    { bone: 'hips', radius: 0.16 },
+    { bone: 'chest', radius: 0.18 },
+  ];
+
+  /** Rest-pose bounds + distance, the floor the adaptive framing never crosses. */
+  private _baseBounds: Bounds | null = null;
+  private _baseDistance = 0;
+  private readonly _fitPoint = new THREE.Vector3();
+
+  /** World position of the bot's feet, where dust should appear. */
+  private _feetPosition(): THREE.Vector3 {
+    const vrm = this._vrm;
+    return new THREE.Vector3(vrm ? vrm.scene.position.x : 0, 0.02, vrm ? vrm.scene.position.z : 0);
+  }
+
+  /** Trigger a sparkle puff by hand (e.g. on a good answer). */
+  sparkle(count = 90): void {
+    this._sparkles.burst(this._feetPosition(), { count });
+  }
+
+  /** Play a named animation clip. See `ANIMATION_CLIPS` for every id. */
+  playClip(id: string): boolean {
+    const started = this._clips.play(id);
+    // Dust follows the moves that deserve it — spins, dances, celebrations.
+    if (started && clipWantsSparkles(id)) this.sparkle();
+    return started;
+  }
+
+  /** Stop the current clip and blend back to the idle pose. */
+  stopClip(): void {
+    this._clips.stop();
+  }
+
+  /** Id of the clip currently playing, if any. */
+  get clipId(): string | undefined {
+    return this._clips.currentId;
+  }
+
+  /** Every clip the engine can play, for building a menu. */
+  get clips(): typeof ANIMATION_CLIPS {
+    return ANIMATION_CLIPS;
+  }
+
+  /**
+   * Put the bot at a named stage and reframe the camera for it.
+   * Returns false when the name is unknown.
+   */
+  setStage(name: string): boolean {
+    const stage = getStage(name);
+    if (!stage) return false;
+    this._stage = stage.name;
+    this.setFraming({ fitFraction: stage.fitFraction, anchor: stage.anchor });
+    this.setSide(stage.x < 0.5 ? 'left' : 'right');
+    return true;
+  }
+
+  /** The stage the bot was last placed on. */
+  get stage(): string | undefined {
+    return this._stage;
   }
 
   /** Set the walk exaggeration multiplier (1 = natural, 0 = no motion). */
@@ -712,10 +801,34 @@ export class AvatarEngine {
 
     this._gesture.setWalk(this._walking, this._walkPhase, this._walkIntensity);
 
+    // Animation clips ride in the same channel as the walk offsets, so a dance
+    // or gesture layers cleanly on top of the walk and the procedural idle.
+    const extra = new Map(this._gesture.offsets());
+    const clipOffsets = this._clips.update(delta);
+    for (const [bone, offset] of clipOffsets) addBoneOffset(extra, bone, offset);
+
+    // Clip root motion is RELATIVE, never accumulated. The engine captures the
+    // pose position for this frame and applies the (clamped) clip offset on top,
+    // so a surprised hop or a dance step returns to the spot when the clip ends.
+    // Adding it into the scene each frame was the bug that let the bot drift away
+    // mid-clip and never come back.
+    const clipRoot = this._clips.root();
+    const baseX = vrm.scene.position.x;
+    const baseY = vrm.scene.position.y;
+    const baseYaw = vrm.scene.rotation.y;
+    vrm.scene.position.x = baseX + THREE.MathUtils.clamp(clipRoot.x, -0.18, 0.18);
+    vrm.scene.position.y =
+      baseY + THREE.MathUtils.clamp(clipRoot.y + clipRoot.bob, -0.16, 0.16);
+    vrm.scene.position.z = THREE.MathUtils.clamp(clipRoot.z, -0.12, 0.12);
+    vrm.scene.rotation.y =
+      baseYaw + THREE.MathUtils.clamp(clipRoot.turn, -Math.PI * 2, Math.PI * 2);
+
+    this._sparkles.update(delta);
+
     const vrmaSafeIdle = !this._vrmaPlaying;
     this._idle.setEnabled(vrmaSafeIdle);
     if (vrmaSafeIdle) {
-      this._idle.update(delta, this._elapsed, this._gesture.offsets());
+      this._idle.update(delta, this._elapsed, extra);
     } else {
       this._idle.update(delta, this._elapsed);
     }
@@ -726,6 +839,10 @@ export class AvatarEngine {
 
     // Spring bones + look-at.
     vrm.update(delta);
+
+    // Last: re-fit the camera to whatever pose that frame produced, so a raised
+    // hand or a jump can never be clipped by the viewport.
+    this._fitToCurrentPose(delta);
   }
 
   private _render(): void {
@@ -765,6 +882,52 @@ export class AvatarEngine {
     this._clock.stop();
   }
 
+  /**
+   * Keep the whole animated body on screen.
+   *
+   * `_computeFraming()` fits the camera to the REST pose and is only re-run on
+   * load/resize, so a clip that raises arms overhead, sits, or jumps used to
+   * leave the head or hands outside the viewport. Here we re-fit every frame
+   * from a handful of key bones and damp the camera toward the result, so the
+   * shot opens up smoothly instead of snapping.
+   */
+  private _fitToCurrentPose(delta: number): void {
+    const vrm = this._vrm;
+    const base = this._baseBounds;
+    if (!vrm || !base || this._baseDistance <= 0) return;
+
+    let bounds = base;
+    const humanoid = vrm.humanoid;
+    if (!humanoid) return;
+    for (const { bone, radius } of AvatarEngine._FIT_BONES) {
+      const node = humanoid.getNormalizedBoneNode(bone);
+      if (!node) continue;
+      node.getWorldPosition(this._fitPoint);
+      bounds = unionBounds(
+        bounds,
+        boundsAround(this._fitPoint.x, this._fitPoint.y, this._fitPoint.z, radius),
+      );
+    }
+    if (!isFiniteBounds(bounds)) return;
+
+    const solution = solveFrame({
+      bounds,
+      fitFraction: this._fitFraction,
+      aspect: this.camera.aspect || 1,
+      fovDeg: this.camera.fov,
+      anchorY: this._anchor.y,
+      anchorX: this._anchor.x,
+      minDistance: this._baseDistance,
+    });
+    if (!Number.isFinite(solution.distance) || !Number.isFinite(solution.lookAtY)) return;
+
+    // Damp rather than jump: the camera should glide out, not snap.
+    const distance = THREE.MathUtils.damp(this.camera.position.z, solution.distance, 6, delta);
+    const y = THREE.MathUtils.damp(this.camera.position.y, solution.lookAtY, 6, delta);
+    this.camera.position.set(0, y, distance);
+    this.camera.lookAt(0, y, 0);
+  }
+
   private _computeFraming(): void {
     const vrm = this._vrm;
     if (!vrm) return;
@@ -783,6 +946,18 @@ export class AvatarEngine {
     this.camera.position.set(0, lookAtY, distance);
     this.camera.lookAt(0, lookAtY, 0);
     this.camera.updateProjectionMatrix();
+
+    // Remember the rest-pose fit: the adaptive pass below may only ever widen
+    // the shot relative to this, never pull closer.
+    this._baseBounds = {
+      minX: box.min.x,
+      minY: box.min.y,
+      minZ: box.min.z,
+      maxX: box.max.x,
+      maxY: box.max.y,
+      maxZ: box.max.z,
+    };
+    this._baseDistance = distance;
 
     this._visibleHeight = visibleHeight;
     this._visibleWidth = visibleHeight * (this.camera.aspect || 1);

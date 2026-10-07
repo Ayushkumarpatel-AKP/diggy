@@ -106,7 +106,7 @@ export async function runResilient(options: ResilientOptions): Promise<Resilient
 
     // A reasoning model occasionally ends a turn with no visible text (all of
     // it went into reasoning, or a tool round finished silently). One nudge
-    // usually gets a real answer instead of "Model ne kuch jawab nahi diya".
+    // usually gets a real answer instead of an empty reply.
     for (let attempt = 0; attempt < 2; attempt += 1) {
       context = options.makeContext();
       let full = '';
