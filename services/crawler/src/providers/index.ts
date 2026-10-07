@@ -2,6 +2,7 @@ import { BUILTIN_PROVIDER_NAME, createBuiltinProvider } from './builtin.js';
 import { BROWSER_USE_PROVIDER_NAME, createBrowserUseProvider } from './browser-use.js';
 import { CRAWL4AI_PROVIDER_NAME, createCrawl4aiProvider } from './crawl4ai.js';
 import { FIRECRAWL_PROVIDER_NAME, createFirecrawlProvider } from './firecrawl.js';
+import { REACH_PROVIDER_NAME, createReachProvider } from './reach.js';
 import { PROVIDER_NAMES, readSettings, type CrawlProvider, type ProviderSettings } from './types.js';
 
 /** Summary row returned by {@link listProviders}. */
@@ -15,12 +16,32 @@ function buildProviders(settings: ProviderSettings): CrawlProvider[] {
     createFirecrawlProvider(settings),
     createCrawl4aiProvider(settings),
     createBrowserUseProvider(settings),
+    createReachProvider(),
     createBuiltinProvider(),
   ];
 }
 
-/** List every known provider with its current availability. */
+/**
+ * List the historical provider set (`firecrawl`, `crawl4ai`, `browser-use`,
+ * `builtin`) with their current availability.
+ *
+ * The `reach` capability layer is fully registered — {@link resolveProvider}
+ * can select it by name and {@link listAllProviders} includes it — but it is
+ * deliberately omitted here so the long-standing `/health` and `/providers`
+ * payloads (and their consumers) keep their exact shape. The `/providers` and
+ * `/health` routes surface `reach` separately.
+ */
 export function listProviders(settings: ProviderSettings = readSettings()): ProviderSummary[] {
+  return buildProviders(settings)
+    .filter((provider) => provider.name !== REACH_PROVIDER_NAME)
+    .map((provider) => ({
+      name: provider.name,
+      available: provider.available(),
+    }));
+}
+
+/** Every registered provider — including the `reach` capability layer. */
+export function listAllProviders(settings: ProviderSettings = readSettings()): ProviderSummary[] {
   return buildProviders(settings).map((provider) => ({
     name: provider.name,
     available: provider.available(),
@@ -81,6 +102,32 @@ export {
   PROVIDER_NAMES,
   readSettings,
 } from './types.js';
+export {
+  DOCTOR_TIMEOUT_MS,
+  FEED_TIMEOUT_MS,
+  JINA_READER_BASE,
+  PROBE_TTL_MS,
+  REACH_PROVIDER_NAME,
+  TRANSCRIPT_TIMEOUT_MS,
+  createReachProvider,
+  fetchFeed,
+  fetchTranscript,
+  parseDoctorOutput,
+  parseFeed,
+  probeReach,
+  reachChannelKey,
+  reachProviderSummary,
+  readWithReach,
+  resetReachProbeCache,
+  stripVtt,
+} from './reach.js';
+export type {
+  FeedItem,
+  FeedResult,
+  ReachProbeResult,
+  ReadResult,
+  TranscriptResult,
+} from './reach.js';
 export type {
   CrawlInput,
   CrawlProvider,

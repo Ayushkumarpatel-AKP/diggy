@@ -141,6 +141,41 @@ function linkCard(title: string, url: string, subtitle?: string): RichCard {
   };
 }
 
+/**
+ * Fetch a YouTube video's transcript from the crawler service.
+ *
+ * A video link read as HTML is useless to the model, so for a YouTube URL we ask
+ * the crawler's `/transcript` route (which delegates to agent-reach / yt-dlp) and
+ * hand back real prose. Returns `undefined` — never throws — for a non-video URL
+ * or when the service or its transcript backend is unavailable, so the caller
+ * falls straight through to the normal page read.
+ */
+async function readTranscript(
+  url: string,
+): Promise<{ title?: string; text: string } | undefined> {
+  if (!/(youtube\.com\/(watch|shorts)\b|youtu\.be\/)/i.test(url)) return undefined;
+  try {
+    const { crawlerUrl } = await getSettings();
+    const base = crawlerUrl.replace(/\/$/, '');
+    const controller = new AbortController();
+    // Transcription can take a while on a long video.
+    const timer = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const response = await fetch(`${base}/transcript?url=${encodeURIComponent(url)}`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) return undefined;
+      const payload = (await response.json()) as { title?: string; text?: string };
+      const text = payload.text?.trim();
+      return text ? { title: payload.title, text } : undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 export class PlatformToolContext implements ToolContext {
   private readonly options: PlatformContextOptions;
   private cards: RichCard[] = [];
@@ -168,6 +203,16 @@ export class PlatformToolContext implements ToolContext {
     // A URL means "fetch it yourself" — never ask the user to open a tab.
     if (params.url && params.url.trim()) {
       const target = params.url.trim();
+
+      // A video link is useless as prose. Fetch the transcript instead so the
+      // model can summarise what was actually said, and fall through to the
+      // normal read when there is no transcript to be had.
+      const transcript = await readTranscript(target);
+      if (transcript) {
+        this.pushCard(linkCard(transcript.title ?? target, target, 'Transcript read by Diggy'));
+        return { url: target, title: transcript.title ?? target, text: transcript.text };
+      }
+
       const page = await extractRemote(target);
       this.pushCard(linkCard(page.title, page.url, 'Page read by Diggy'));
       return { url: page.url, title: page.title, text: page.text };

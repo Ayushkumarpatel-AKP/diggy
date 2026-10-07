@@ -3,6 +3,12 @@ import { extractFromHtml } from './extract.js';
 import { crawl, fetchPageHtml } from './crawl.js';
 import { toMarkdown } from './markdown.js';
 import { listProviders, resolveProvider } from './providers/index.js';
+import {
+  fetchFeed,
+  fetchTranscript,
+  probeReach,
+  reachProviderSummary,
+} from './providers/reach.js';
 import { isNetworkDisabled, searchWeb } from './search.js';
 
 const HOST = '127.0.0.1';
@@ -32,8 +38,41 @@ interface SearchQuery {
   q?: string;
 }
 
+interface TranscriptQuery {
+  url?: string;
+  lang?: string;
+}
+
+interface FeedQuery {
+  url?: string;
+  max?: string;
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Whether a query value is an absolute `http(s)` URL. */
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validate an optional positive-integer query parameter. Returns the fallback
+ * when absent, the parsed integer when valid, or `undefined` when the value is
+ * present but malformed/out of range (which the caller turns into a 400).
+ */
+function parseBoundedInt(value: unknown, fallback: number, upper: number): number | undefined {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return undefined;
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > upper) return undefined;
+  return parsed;
 }
 
 /**
@@ -48,9 +87,13 @@ export function buildServer(): FastifyInstance {
     status: 'ok',
     service: '@diggy/crawler',
     providers: listProviders(),
+    reach: reachProviderSummary(),
   }));
 
-  app.get('/providers', async () => ({ providers: listProviders() }));
+  app.get('/providers', async () => ({
+    providers: listProviders(),
+    reach: reachProviderSummary(),
+  }));
 
   app.post<{ Body: ExtractBody }>('/extract', async (request, reply) => {
     const body = request.body ?? {};
@@ -134,6 +177,75 @@ export function buildServer(): FastifyInstance {
       reply.code(502);
       return { error: `Search failed: ${messageOf(error)}` };
     }
+  });
+
+  // ── reach capability layer ──────────────────────────────────────────────
+
+  app.get<{ Querystring: TranscriptQuery }>('/transcript', async (request, reply) => {
+    const url = typeof request.query.url === 'string' ? request.query.url.trim() : '';
+    if (!url || !isHttpUrl(url)) {
+      reply.code(400);
+      return { error: 'Query parameter "url" must be a valid http(s) URL.' };
+    }
+    const lang =
+      typeof request.query.lang === 'string' && request.query.lang.trim().length > 0
+        ? request.query.lang.trim()
+        : 'en';
+
+    if (isNetworkDisabled()) {
+      return { url, language: lang, text: '', source: 'yt-dlp', offline: true };
+    }
+
+    try {
+      const transcript = await fetchTranscript(url, { lang });
+      if (!transcript) {
+        reply.code(502);
+        return { error: `Failed to fetch a transcript for ${url}.` };
+      }
+      return {
+        ...(transcript.title ? { title: transcript.title } : {}),
+        language: transcript.language ?? lang,
+        text: transcript.text,
+        source: 'yt-dlp',
+      };
+    } catch (error) {
+      reply.code(502);
+      return { error: `Failed to fetch a transcript for ${url}: ${messageOf(error)}` };
+    }
+  });
+
+  app.get<{ Querystring: FeedQuery }>('/feed', async (request, reply) => {
+    const url = typeof request.query.url === 'string' ? request.query.url.trim() : '';
+    if (!url || !isHttpUrl(url)) {
+      reply.code(400);
+      return { error: 'Query parameter "url" must be a valid http(s) URL.' };
+    }
+    const max = parseBoundedInt(request.query.max, 10, 100);
+    if (max === undefined) {
+      reply.code(400);
+      return { error: 'Query parameter "max" must be an integer between 1 and 100.' };
+    }
+
+    if (isNetworkDisabled()) {
+      return { url, max, items: [], offline: true };
+    }
+
+    try {
+      const feed = await fetchFeed(url, { max });
+      if (!feed) {
+        reply.code(502);
+        return { error: `Failed to fetch the feed at ${url}.` };
+      }
+      return { ...(feed.title ? { title: feed.title } : {}), items: feed.items };
+    } catch (error) {
+      reply.code(502);
+      return { error: `Failed to fetch the feed at ${url}: ${messageOf(error)}` };
+    }
+  });
+
+  app.get('/reach', async () => {
+    const probe = await probeReach();
+    return probe;
   });
 
   return app;
